@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shingan — iOS IPA解析耐性チェッカー</title>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3e;
+    --text: #e2e8f0; --muted: #718096;
+    --accent: #76e4f7; --accent-dim: rgba(118,228,247,0.1);
+    --high: #fc8181; --medium: #f6ad55; --low: #68d391; --info: #76e4f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; line-height: 1.6; min-height: 100vh; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 20px 32px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 22px; font-weight: 700; letter-spacing: 0.04em; }
+  header h1 span { color: var(--accent); }
+  header .tagline { color: var(--muted); font-size: 12px; }
+  .container { max-width: 1000px; margin: 0 auto; padding: 40px 32px; }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: 12px; padding: 48px;
+    text-align: center; cursor: pointer; transition: all 0.2s;
+    background: var(--surface);
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: var(--accent-dim); }
+  .upload-zone .icon { font-size: 40px; margin-bottom: 12px; }
+  .upload-zone p { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .upload-zone strong { color: var(--text); }
+  #fileInput { display: none; }
+  .btn {
+    background: var(--accent); color: #0f1117; border: none; border-radius: 6px;
+    padding: 10px 24px; font-size: 13px; font-weight: 700; cursor: pointer;
+    font-family: inherit; margin-top: 16px; letter-spacing: 0.04em;
+    transition: opacity 0.15s;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn:hover:not(:disabled) { opacity: 0.85; }
+
+  /* Progress */
+  #progress { display: none; margin-top: 20px; }
+  .progress-bar-wrap { background: var(--border); border-radius: 4px; height: 4px; margin-top: 8px; }
+  .progress-bar { background: var(--accent); height: 4px; border-radius: 4px; width: 0%; transition: width 0.3s; }
+  #statusMsg { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+  /* Scan history */
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin: 40px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .scan-list { display: flex; flex-direction: column; gap: 8px; }
+  .scan-row {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 18px; display: flex; align-items: center; gap: 16px;
+    text-decoration: none; color: inherit; transition: border-color 0.15s;
+  }
+  .scan-row:hover { border-color: var(--accent); }
+  .scan-row .app-id { font-size: 13px; flex: 1; }
+  .scan-row .version { color: var(--muted); font-size: 12px; }
+  .scan-row .date { color: var(--muted); font-size: 11px; }
+  .badges { display: flex; gap: 6px; }
+  .badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; }
+  .badge-h { background: #2d1515; color: var(--high); border: 1px solid var(--high); }
+  .badge-m { background: #2d1f0a; color: var(--medium); border: 1px solid var(--medium); }
+  .badge-l { background: #0f2d1a; color: var(--low); border: 1px solid var(--low); }
+  .empty { color: var(--muted); font-size: 13px; padding: 20px 0; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>shin<span>gan</span></h1>
+    <div class="tagline">iOS IPA 解析耐性チェッカー</div>
+  </div>
+</header>
+
+<div class="container">
+  <!-- Upload -->
+  <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <div class="icon">📦</div>
+    <strong>IPAファイルをドロップ</strong>
+    <p>または クリックして選択</p>
+    <input type="file" id="fileInput" accept=".ipa">
+    <button class="btn" id="scanBtn" disabled onclick="event.stopPropagation(); startScan()">スキャン開始</button>
+  </div>
+
+  <div id="progress">
+    <div id="statusMsg">解析中...</div>
+    <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+  </div>
+
+  <!-- History -->
+  <div class="section-title">スキャン履歴</div>
+  <div class="scan-list" id="scanList">
+    {% if scans %}
+      {% for s in scans %}
+      <a class="scan-row" href="/scans/{{ s.scan_id }}">
+        <div class="app-id">{{ s.app_id }}</div>
+        <div class="version">{{ s.app_version }} ({{ s.build }})</div>
+        <div class="badges">
+          {% if s.summary.high > 0 %}<span class="badge badge-h">H {{ s.summary.high }}</span>{% endif %}
+          {% if s.summary.medium > 0 %}<span class="badge badge-m">M {{ s.summary.medium }}</span>{% endif %}
+          {% if s.summary.low > 0 %}<span class="badge badge-l">L {{ s.summary.low }}</span>{% endif %}
+        </div>
+        <div class="date">{{ s.scanned_at[:19].replace('T', ' ') }}</div>
+      </a>
+      {% endfor %}
+    {% else %}
+      <div class="empty">まだスキャンがありません。IPAをアップロードして開始してください。</div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const scanBtn   = document.getElementById('scanBtn');
+const progress  = document.getElementById('progress');
+const statusMsg = document.getElementById('statusMsg');
+const progressBar = document.getElementById('progressBar');
+let selectedFile = null;
+
+fileInput.addEventListener('change', e => {
+  selectedFile = e.target.files[0];
+  if (selectedFile) {
+    scanBtn.disabled = false;
+    dropZone.querySelector('strong').textContent = selectedFile.name;
+  }
+});
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.endsWith('.ipa')) {
+    selectedFile = file;
+    scanBtn.disabled = false;
+    dropZone.querySelector('strong').textContent = file.name;
+  }
+});
+
+async function startScan() {
+  if (!selectedFile) return;
+  scanBtn.disabled = true;
+  progress.style.display = 'block';
+  statusMsg.textContent = 'アップロード中...';
+  progressBar.style.width = '20%';
+
+  const form = new FormData();
+  form.append('file', selectedFile);
+  try {
+    statusMsg.textContent = '静的解析中...';
+    progressBar.style.width = '60%';
+    const res = await fetch('/api/scans', { method: 'POST', body: form });
+    progressBar.style.width = '100%';
+    if (!res.ok) {
+      const err = await res.json();
+      statusMsg.textContent = `エラー: ${err.detail}`;
+      scanBtn.disabled = false;
+      return;
+    }
+    const data = await res.json();
+    window.location.href = `/scans/${data.scan_id}`;
+  } catch (e) {
+    statusMsg.textContent = `エラー: ${e.message}`;
+    scanBtn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
