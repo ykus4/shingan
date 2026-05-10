@@ -10,7 +10,7 @@ Rule schema:
   recommendation: "How to fix it"
   masvs: MASVS-RESILIENCE-1   # optional
   match:
-    type: string | regex | plist_key | symbol
+    type: string | regex | plist_key
     target: binary | info_plist      # binary = string table, info_plist = Info.plist
     patterns:
       - "SomeString"
@@ -20,8 +20,8 @@ Rule schema:
 
 from __future__ import annotations
 
+import logging
 import re
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -30,15 +30,19 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
+from shingan.core.binary import CheckContext
 from shingan.core.models import Finding, Severity
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_RULES_DIR = Path.home() / ".shingan" / "rules"
 
 
 def _load_yaml_rules(rules_dir: Path) -> list[dict]:
     if yaml is None:
+        logger.warning("PyYAML not installed — custom rules disabled")
         return []
-    rules = []
+    rules: list[dict] = []
     if not rules_dir.exists():
         return rules
     for path in sorted(rules_dir.glob("*.yaml")) + sorted(rules_dir.glob("*.yml")):
@@ -49,53 +53,40 @@ def _load_yaml_rules(rules_dir: Path) -> list[dict]:
                 rules.extend(data)
             elif isinstance(data, dict):
                 rules.append(data)
-        except Exception:
-            continue
+        except Exception as exc:
+            logger.warning("Failed to load custom rule file %s: %s", path, exc)
     return rules
 
 
-def _get_strings(binary_path: Path) -> set[str]:
-    try:
-        result = subprocess.run(
-            ["strings", "-a", "-n", "5", str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return set(result.stdout.splitlines())
-    except Exception:
-        return set()
-
-
 def _match_string(patterns: list[str], corpus: set[str], any_match: bool) -> list[str]:
-    hits = []
+    hits: list[str] = []
+    matched_count = 0
     for pat in patterns:
-        matched = [s for s in corpus if pat in s]
-        if matched:
-            hits.extend(matched[:3])
+        found = [s for s in corpus if pat in s]
+        if found:
+            hits.extend(found[:3])
+            matched_count += 1
     if any_match:
         return hits[:10]
-    # all-match: every pattern must appear
-    if len(hits) >= len(patterns):
-        return hits[:10]
-    return []
+    return hits[:10] if matched_count == len(patterns) else []
 
 
 def _match_regex(patterns: list[str], corpus: set[str], any_match: bool) -> list[str]:
-    hits = []
-    matched_patterns = 0
+    hits: list[str] = []
+    matched_count = 0
     for pat in patterns:
         try:
             rx = re.compile(pat)
-        except re.error:
+        except re.error as exc:
+            logger.warning("Invalid regex in custom rule: %r — %s", pat, exc)
             continue
         found = [s for s in corpus if rx.search(s)]
         if found:
             hits.extend(found[:3])
-            matched_patterns += 1
+            matched_count += 1
     if any_match and hits:
         return hits[:10]
-    if not any_match and matched_patterns == len(patterns):
+    if not any_match and matched_count == len(patterns):
         return hits[:10]
     return []
 
@@ -103,9 +94,8 @@ def _match_regex(patterns: list[str], corpus: set[str], any_match: bool) -> list
 def _match_plist_key(
     patterns: list[str], info_plist: dict, any_match: bool
 ) -> list[str]:
-    hits = []
+    hits: list[str] = []
     for pat in patterns:
-        # Support dot-notation: "NSAppTransportSecurity.NSAllowsArbitraryLoads"
         parts = pat.split(".")
         node: Any = info_plist
         for part in parts:
@@ -124,8 +114,7 @@ def _match_plist_key(
 
 
 def apply_custom_rules(
-    binary_path: Path,
-    info_plist: dict,
+    ctx: CheckContext,
     rules_dir: Path = DEFAULT_RULES_DIR,
 ) -> list[Finding]:
     rules = _load_yaml_rules(rules_dir)
@@ -133,10 +122,9 @@ def apply_custom_rules(
         return []
 
     findings: list[Finding] = []
-    strings: set[str] | None = None
 
     for rule in rules:
-        rule_id = rule.get("id", "CUSTOM-000")
+        rule_id = rule.get("id") or "CUSTOM-000"
         title = rule.get("title", rule_id)
         severity = Severity(rule.get("severity", "info"))
         description = rule.get("description", "")
@@ -146,8 +134,8 @@ def apply_custom_rules(
 
         match_type = match_cfg.get("type", "string")
         target = match_cfg.get("target", "binary")
-        patterns = match_cfg.get("patterns", [])
-        any_match = match_cfg.get("any", True)
+        patterns: list[str] = match_cfg.get("patterns", [])
+        any_match: bool = match_cfg.get("any", True)
 
         if not patterns:
             continue
@@ -155,14 +143,12 @@ def apply_custom_rules(
         hits: list[str] = []
 
         if target == "binary":
-            if strings is None:
-                strings = _get_strings(binary_path)
             if match_type == "string":
-                hits = _match_string(patterns, strings, any_match)
+                hits = _match_string(patterns, ctx.strings, any_match)
             elif match_type == "regex":
-                hits = _match_regex(patterns, strings, any_match)
+                hits = _match_regex(patterns, ctx.strings, any_match)
         elif target == "info_plist":
-            hits = _match_plist_key(patterns, info_plist, any_match)
+            hits = _match_plist_key(patterns, ctx.info_plist, any_match)
 
         if hits:
             findings.append(
@@ -173,7 +159,8 @@ def apply_custom_rules(
                     description=description,
                     evidence="\n".join(hits),
                     recommendation=recommendation,
-                    extra={"masvs": masvs, "custom": True},
+                    masvs=masvs,
+                    extra={"custom": True},
                 )
             )
 

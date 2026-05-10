@@ -17,7 +17,7 @@ from shingan.core.report import to_html, to_sarif
 from shingan.core.storage import ScanStore
 from shingan.core.suppression import SuppressionStore
 
-app = FastAPI(title="shingan", version="0.2.0")
+app = FastAPI(title="shingan", version="1.0.0")
 
 _HERE = Path(__file__).parent
 _WEB = _HERE.parent / "web"
@@ -57,16 +57,7 @@ async def scan_detail(request: Request, scan_id: str, baseline_id: str | None = 
         except FileNotFoundError:
             pass
 
-    # Pass sibling scans for the diff selector UI
-    siblings = store.list_scans(app_id=result.app_id)
-
-    html = to_html(
-        result,
-        diff_new=diff_new,
-        diff_fixed=diff_fixed,
-        siblings=siblings,
-        current_baseline_id=baseline_id,
-    )
+    html = to_html(result, diff_new=diff_new, diff_fixed=diff_fixed)
     return HTMLResponse(content=html)
 
 

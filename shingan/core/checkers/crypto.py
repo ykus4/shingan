@@ -5,11 +5,7 @@ Looks for usage of deprecated/weak algorithms: MD5, SHA1, DES, 3DES, RC4, ECB mo
 
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
-
-import lief
-
+from shingan.core.binary import CheckContext
 from shingan.core.models import Finding, Severity
 
 WEAK_CRYPTO: list[tuple[str, str, list[str], str]] = [
@@ -51,38 +47,18 @@ WEAK_CRYPTO: list[tuple[str, str, list[str], str]] = [
     (
         "IOS-SEC-010f",
         "Hardcoded IV / static initialization vector",
-        ["kCCOptionECBMode"],  # covered separately by string check
+        ["kCCOptionECBMode"],  # static IV often co-occurs with ECB; expand as needed
         "A static IV defeats the purpose of encryption.",
     ),
 ]
 
 
-def _get_strings(binary_path: Path) -> set[str]:
-    try:
-        result = subprocess.run(
-            ["strings", "-a", "-n", "5", str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return set(result.stdout.splitlines())
-    except Exception:
-        return set()
-
-
-def check(binary_path: Path) -> list[Finding]:
+def check(ctx: CheckContext) -> list[Finding]:
     findings: list[Finding] = []
-
-    binary = lief.parse(str(binary_path))
-    symbol_names: set[str] = set()
-    if binary is not None:
-        symbol_names = {sym.name for sym in binary.symbols}
-
-    strings = _get_strings(binary_path)
-    all_text = symbol_names | strings
+    corpus = ctx.all_text
 
     for rule_id, title, indicators, recommendation in WEAK_CRYPTO:
-        hits = [ind for ind in indicators if any(ind in t for t in all_text)]
+        hits = [ind for ind in indicators if any(ind in t for t in corpus)]
         if hits:
             findings.append(
                 Finding(
@@ -91,7 +67,8 @@ def check(binary_path: Path) -> list[Finding]:
                     severity=Severity.MEDIUM,
                     description=(
                         f"Weak cryptographic indicator(s) found: {', '.join(hits)}. "
-                        "Using weak algorithms can allow attackers to recover plaintext or forge signatures."
+                        "Using weak algorithms can allow attackers to recover plaintext "
+                        "or forge signatures."
                     ),
                     evidence="\n".join(hits),
                     recommendation=recommendation,

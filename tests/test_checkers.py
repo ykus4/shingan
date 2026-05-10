@@ -6,13 +6,18 @@ import json
 import tempfile
 from pathlib import Path
 
+from shingan.core.binary import CheckContext
 from shingan.core.checkers import ats
+from shingan.core.checkers.crypto import check as check_crypto
+from shingan.core.checkers.debug_flags import check as check_debug
 from shingan.core.checkers.metadata import check as check_metadata
+from shingan.core.checkers.protection import check as check_protection
 from shingan.core.checkers.secrets import _shannon_entropy
+from shingan.core.constants import LSA_SCHEMES_THRESHOLD
 from shingan.core.diff import compare
 from shingan.core.models import Finding, ScanResult, Severity
-from shingan.core.suppression import Suppression, SuppressionStore
 from shingan.core.report import to_html, to_json, to_sarif
+from shingan.core.suppression import Suppression, SuppressionStore
 
 
 # ── ATS checker ───────────────────────────────────────────────────────────────
@@ -366,3 +371,79 @@ def test_to_html_diff_badges():
     fp = result.findings[0].fingerprint()
     html = to_html(result, diff_new={fp}, lang="en")
     assert "NEW" in html
+
+
+# ── CheckContext ──────────────────────────────────────────────────────────────
+
+
+def _make_ctx(
+    strings: set[str] | None = None, info_plist: dict | None = None
+) -> CheckContext:
+    """Build a CheckContext with pre-populated strings (no subprocess needed)."""
+    ctx = CheckContext(binary_path=Path("/dev/null"), info_plist=info_plist or {})
+    if strings is not None:
+        # Bypass lazy property by directly setting the cached value
+        ctx.__dict__["strings"] = strings
+        ctx.__dict__["symbol_names"] = set()
+        ctx.__dict__["lief_binary"] = None
+        ctx.__dict__["objc_classes"] = []
+        ctx.__dict__["all_text"] = strings
+    return ctx
+
+
+def test_check_context_empty_strings():
+    ctx = _make_ctx(strings=set())
+    assert ctx.strings == set()
+    assert ctx.symbol_names == set()
+    assert ctx.all_text == set()
+
+
+def test_crypto_checker_detects_md5():
+    ctx = _make_ctx(strings={"_CC_MD5", "something else"})
+    findings = check_crypto(ctx)
+    assert any(f.rule_id == "IOS-SEC-010a" for f in findings)
+
+
+def test_crypto_checker_clean():
+    ctx = _make_ctx(strings={"SomeRandomString", "OtherThing"})
+    findings = check_crypto(ctx)
+    assert not any(f.rule_id.startswith("IOS-SEC-010") for f in findings)
+
+
+def test_debug_flags_nsa_assertions():
+    ctx = _make_ctx(strings=set(), info_plist={"NSAssertionsEnabled": True})
+    findings = check_debug(ctx)
+    assert any(f.rule_id == "IOS-DBG-004c" for f in findings)
+
+
+def test_debug_flags_debug_string():
+    ctx = _make_ctx(strings={"NSLog(@'hello world')"})
+    findings = check_debug(ctx)
+    assert any(f.rule_id == "IOS-DBG-004b" for f in findings)
+
+
+def test_protection_no_jailbreak_detection():
+    ctx = _make_ctx(strings={"some_unrelated_string"})
+    findings = check_protection(ctx)
+    jb = [f for f in findings if f.rule_id == "IOS-RASP-005a-missing"]
+    assert len(jb) == 1
+    assert jb[0].severity == Severity.MEDIUM
+
+
+def test_protection_jailbreak_detected():
+    ctx = _make_ctx(strings={"/Applications/Cydia.app", "other"})
+    findings = check_protection(ctx)
+    jb = [f for f in findings if f.rule_id == "IOS-RASP-005a-found"]
+    assert len(jb) == 1
+    assert jb[0].severity == Severity.INFO
+
+
+def test_ats_schemes_threshold():
+    """LSA_SCHEMES_THRESHOLD constant controls the finding boundary."""
+    schemes_at_limit = [f"s{i}" for i in range(LSA_SCHEMES_THRESHOLD)]
+    findings_at = ats.check({"LSApplicationQueriesSchemes": schemes_at_limit})
+    assert not any(f.rule_id == "IOS-ATS-003h" for f in findings_at)
+
+    schemes_over = [f"s{i}" for i in range(LSA_SCHEMES_THRESHOLD + 1)]
+    findings_over = ats.check({"LSApplicationQueriesSchemes": schemes_over})
+    assert any(f.rule_id == "IOS-ATS-003h" for f in findings_over)

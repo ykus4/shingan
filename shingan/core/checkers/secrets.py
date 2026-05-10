@@ -7,13 +7,23 @@ Extracts printable strings from the binary and runs:
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import subprocess
-from pathlib import Path
 
+from shingan.core.binary import CheckContext
+from shingan.core.constants import (
+    ENTROPY_MIN_LEN,
+    ENTROPY_SAMPLE_SIZE,
+    ENTROPY_THRESHOLD,
+    SECRETS_MAX_HITS_PER_PATTERN,
+    SECRETS_STRINGS_MIN_LEN,
+    SUBPROCESS_TIMEOUT,
+)
 from shingan.core.models import Finding, Severity
 
+logger = logging.getLogger(__name__)
 
 # (rule_id_suffix, label, pattern)
 SECRET_PATTERNS: list[tuple[str, str, re.Pattern]] = [
@@ -55,47 +65,51 @@ SECRET_PATTERNS: list[tuple[str, str, re.Pattern]] = [
     ),
 ]
 
-ENTROPY_THRESHOLD = 4.2  # bits per character — typical for base64/hex secrets
-ENTROPY_MIN_LEN = 20  # ignore short strings
+# Prefixes that commonly produce high-entropy false positives
+_ENTROPY_FALSE_POSITIVE_PREFIXES = ("https://", "http://", "com.", "org.", "eyJ")
 
 
 def _shannon_entropy(s: str) -> float:
     if not s:
         return 0.0
-    freq = {}
+    freq: dict[str, int] = {}
     for c in s:
         freq[c] = freq.get(c, 0) + 1
     length = len(s)
     return -sum((f / length) * math.log2(f / length) for f in freq.values())
 
 
-def _extract_strings(binary_path: Path) -> list[str]:
-    """Use `strings` to pull printable sequences from the binary."""
+def _extract_strings_long(binary_path) -> list[str]:
+    """Use `strings` with a longer minimum length for secret scanning."""
     try:
         result = subprocess.run(
-            ["strings", "-a", "-n", "8", str(binary_path)],
+            ["strings", "-a", "-n", str(SECRETS_STRINGS_MIN_LEN), str(binary_path)],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         return result.stdout.splitlines()
-    except Exception:
+    except Exception as exc:
+        logger.debug("strings command failed: %s", exc)
         return []
 
 
-def check(binary_path: Path) -> list[Finding]:
+def check(ctx: CheckContext) -> list[Finding]:
     findings: list[Finding] = []
-    strings = _extract_strings(binary_path)
+
+    # Secrets scanning benefits from a slightly higher minimum string length
+    # to reduce noise; we use a dedicated extraction rather than ctx.strings.
+    strings = _extract_strings_long(ctx.binary_path)
 
     # --- Pattern matching ---
     matched: dict[str, list[str]] = {}
     for line in strings:
-        for suffix, label, pattern in SECRET_PATTERNS:
+        for suffix, _label, pattern in SECRET_PATTERNS:
             m = pattern.search(line)
             if m:
-                matched.setdefault(suffix, [])
-                if len(matched[suffix]) < 10:
-                    matched[suffix].append(line.strip()[:200])
+                bucket = matched.setdefault(suffix, [])
+                if len(bucket) < SECRETS_MAX_HITS_PER_PATTERN:
+                    bucket.append(line.strip()[:200])
 
     for suffix, label, _ in SECRET_PATTERNS:
         hits = matched.get(suffix)
@@ -122,18 +136,16 @@ def check(binary_path: Path) -> list[Finding]:
         )
 
     # --- High-entropy strings ---
-    high_entropy = []
-    for line in strings:
-        s = line.strip()
-        if len(s) >= ENTROPY_MIN_LEN and _shannon_entropy(s) >= ENTROPY_THRESHOLD:
-            # Skip common false positives
-            if not any(
-                s.startswith(fp)
-                for fp in ("https://", "http://", "com.", "org.", "eyJ")
-            ):
-                high_entropy.append(s[:200])
+    high_entropy = [
+        s.strip()[:200]
+        for line in strings
+        if (
+            len((s := line.strip())) >= ENTROPY_MIN_LEN
+            and _shannon_entropy(s) >= ENTROPY_THRESHOLD
+            and not any(s.startswith(fp) for fp in _ENTROPY_FALSE_POSITIVE_PREFIXES)
+        )
+    ]
     if high_entropy:
-        sample = high_entropy[:10]
         findings.append(
             Finding(
                 rule_id="IOS-SEC-002-entropy",
@@ -143,9 +155,10 @@ def check(binary_path: Path) -> list[Finding]:
                     f"{len(high_entropy)} string(s) with Shannon entropy ≥ {ENTROPY_THRESHOLD:.1f} found. "
                     "These may be base64-encoded keys, encrypted blobs, or embedded certificates."
                 ),
-                evidence="\n".join(sample),
+                evidence="\n".join(high_entropy[:ENTROPY_SAMPLE_SIZE]),
                 recommendation=(
-                    "Review each high-entropy string manually. Secrets should not be baked into the binary."
+                    "Review each high-entropy string manually. "
+                    "Secrets should not be baked into the binary."
                 ),
                 extra={"total_high_entropy": len(high_entropy)},
                 masvs="MASVS-STORAGE-2",

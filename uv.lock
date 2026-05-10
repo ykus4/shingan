@@ -33,12 +33,6 @@ wheels = [
 ]
 
 [[package]]
-name = "biplist"
-version = "1.0.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3e/56/2db170a498c9c6545cda16e93c2f2ef9302da44802787b45a8a520d01bdb/biplist-1.0.3.tar.gz", hash = "sha256:4c0549764c5fe50b28042ec21aa2e14fe1a2224e239a1dae77d9e7f3932aa4c6", size = 21258, upload-time = "2017-12-03T23:36:37.756Z" }
-
-[[package]]
 name = "cfgv"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -499,15 +493,15 @@ wheels = [
 
 [[package]]
 name = "shingan"
-version = "0.1.0"
+version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "biplist" },
     { name = "click" },
     { name = "fastapi" },
     { name = "jinja2" },
     { name = "lief" },
     { name = "python-multipart" },
+    { name = "pyyaml" },
     { name = "rich" },
     { name = "uvicorn" },
 ]
@@ -521,12 +515,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "biplist", specifier = ">=1.0.3" },
     { name = "click", specifier = ">=8.3.3" },
     { name = "fastapi", specifier = ">=0.136.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "lief", specifier = ">=0.17.6" },
     { name = "python-multipart", specifier = ">=0.0.27" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "uvicorn", specifier = ">=0.46.0" },
 ]

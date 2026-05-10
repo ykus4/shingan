@@ -6,18 +6,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from shingan.core.constants import FINGERPRINT_EVIDENCE_LEN
+
 
 class Severity(str, Enum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
     INFO = "info"
-
-
-class Status(str, Enum):
-    NEW = "new"
-    FIXED = "fixed"
-    PERSISTED = "persisted"  # existed in baseline too
 
 
 @dataclass
@@ -58,7 +54,7 @@ class Finding:
 
     def fingerprint(self) -> str:
         """Stable identifier for diff comparison."""
-        return f"{self.rule_id}:{self.evidence[:120]}"
+        return f"{self.rule_id}:{self.evidence[:FINGERPRINT_EVIDENCE_LEN]}"
 
 
 @dataclass
