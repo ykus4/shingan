@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-
+from shingan.core.constants import LSA_SCHEMES_THRESHOLD
 from shingan.core.models import Finding, Severity
 
 
@@ -122,7 +122,7 @@ def check(info_plist: dict) -> list[Finding]:
 
     # --- 6. LSApplicationQueriesSchemes (URL scheme enumeration) ---
     schemes = info_plist.get("LSApplicationQueriesSchemes", [])
-    if len(schemes) > 10:
+    if len(schemes) > LSA_SCHEMES_THRESHOLD:
         findings.append(
             Finding(
                 rule_id="IOS-ATS-003h",

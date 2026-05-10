@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -157,35 +156,3 @@ def to_html(
         i18n=i18n,
         lang=lang,
     )
-
-
-def write_report(
-    result: ScanResult,
-    output_dir: Path,
-    formats: list[Literal["json", "sarif", "html"]] | None = None,
-    diff_new: set[str] | None = None,
-    diff_fixed: set[str] | None = None,
-    lang: str = "en",
-) -> dict[str, Path]:
-    if formats is None:
-        formats = ["json", "html"]
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    written = {}
-    stem = result.scan_id[:8]
-    if "json" in formats:
-        p = output_dir / f"{stem}.json"
-        p.write_text(to_json(result), encoding="utf-8")
-        written["json"] = p
-    if "sarif" in formats:
-        p = output_dir / f"{stem}.sarif"
-        p.write_text(to_sarif(result), encoding="utf-8")
-        written["sarif"] = p
-    if "html" in formats:
-        p = output_dir / f"{stem}.html"
-        p.write_text(
-            to_html(result, diff_new=diff_new, diff_fixed=diff_fixed, lang=lang),
-            encoding="utf-8",
-        )
-        written["html"] = p
-    return written

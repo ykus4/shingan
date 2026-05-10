@@ -5,26 +5,21 @@ Checks for PIE, stack canary, and ARC via Mach-O load commands and symbol table.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import lief
-
+from shingan.core.binary import CheckContext
 from shingan.core.models import Finding, Severity
 
 
-def check(binary_path: Path) -> list[Finding]:
+def check(ctx: CheckContext) -> list[Finding]:
     findings: list[Finding] = []
-
-    binary = lief.parse(str(binary_path))
+    binary = ctx.lief_binary
     if binary is None:
         return findings
 
     # --- 1. PIE (Position Independent Executable) ---
-    has_pie = binary.is_pie
-    if not has_pie:
+    if not binary.is_pie:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-006",
+                rule_id="IOS-RASP-006-missing",
                 title="PIE (Position Independent Executable) is not enabled",
                 severity=Severity.HIGH,
                 description=(
@@ -42,7 +37,7 @@ def check(binary_path: Path) -> list[Finding]:
     else:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-006",
+                rule_id="IOS-RASP-006-found",
                 title="PIE is enabled",
                 severity=Severity.INFO,
                 description="The binary is compiled as a Position Independent Executable.",
@@ -53,15 +48,14 @@ def check(binary_path: Path) -> list[Finding]:
         )
 
     # --- 2. Stack canary ---
-    symbol_names = {sym.name for sym in binary.symbols}
     has_canary = any(
-        s in symbol_names
+        s in ctx.symbol_names
         for s in ("___stack_chk_fail", "___stack_chk_guard", "__stack_chk_fail")
     )
     if not has_canary:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-007",
+                rule_id="IOS-RASP-007-missing",
                 title="Stack canary not detected",
                 severity=Severity.MEDIUM,
                 description=(
@@ -79,7 +73,7 @@ def check(binary_path: Path) -> list[Finding]:
     else:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-007",
+                rule_id="IOS-RASP-007-found",
                 title="Stack canary is present",
                 severity=Severity.INFO,
                 description="Stack canary symbols detected in the binary.",
@@ -91,19 +85,14 @@ def check(binary_path: Path) -> list[Finding]:
 
     # --- 3. ARC (Automatic Reference Counting) ---
     has_arc = any(
-        s in symbol_names
+        s in ctx.symbol_names
         for s in ("_objc_retain", "_objc_release", "_objc_autorelease")
     )
-    # ARC is only relevant for ObjC binaries — skip pure Swift
-    has_objc = (
-        bool(list(binary.objc_classes)[:1])
-        if hasattr(binary, "objc_classes")
-        else False
-    )
+    has_objc = bool(ctx.objc_classes)
     if has_objc and not has_arc:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-008",
+                rule_id="IOS-RASP-008-missing",
                 title="ARC (Automatic Reference Counting) not detected in ObjC binary",
                 severity=Severity.MEDIUM,
                 description=(
@@ -120,7 +109,7 @@ def check(binary_path: Path) -> list[Finding]:
     elif has_arc:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-008",
+                rule_id="IOS-RASP-008-found",
                 title="ARC is enabled",
                 severity=Severity.INFO,
                 description="ARC runtime symbols detected.",

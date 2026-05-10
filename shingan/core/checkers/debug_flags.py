@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import plistlib
 import re
 import subprocess
-from pathlib import Path
 
+from shingan.core.binary import CheckContext
+from shingan.core.constants import EVIDENCE_DEBUG_SAMPLE
 from shingan.core.models import Finding, Severity
 
+logger = logging.getLogger(__name__)
 
 # Entitlements that should not appear in App Store / release builds
-DANGEROUS_ENTITLEMENTS = {
+DANGEROUS_ENTITLEMENTS: dict[str, tuple[Severity, str]] = {
     "get-task-allow": (
         Severity.HIGH,
         "Allows a debugger to attach to the process (task_for_pid). "
@@ -35,9 +38,19 @@ DANGEROUS_ENTITLEMENTS = {
     ),
 }
 
+_DEBUG_STRING_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\bNSLog\b"),
+    re.compile(r"\bprint\("),
+    re.compile(r"\bDEBUG\b"),
+    re.compile(r"\b__debug\b"),
+    re.compile(r"LLDB"),
+    re.compile(r"lldb"),
+    re.compile(r"OSLog"),
+]
 
-def _read_entitlements(binary_path: Path) -> dict:
-    """Extract embedded entitlements via codesign."""
+
+def _read_entitlements(binary_path) -> dict:
+    """Extract embedded entitlements via codesign (macOS only)."""
     try:
         result = subprocess.run(
             ["codesign", "-d", "--entitlements", ":-", str(binary_path)],
@@ -48,48 +61,18 @@ def _read_entitlements(binary_path: Path) -> dict:
         if not raw:
             return {}
         return plistlib.loads(raw)
-    except Exception:
+    except Exception as exc:
+        logger.debug("codesign entitlements extraction failed: %s", exc)
         return {}
 
 
-def _check_binary_strings_for_debug(binary_path: Path) -> list[str]:
-    """Look for debug-related strings compiled into the binary."""
-    try:
-        result = subprocess.run(
-            ["strings", "-a", "-n", "6", str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        lines = result.stdout.splitlines()
-        patterns = [
-            re.compile(r"\bNSLog\b"),
-            re.compile(r"\bprint\("),
-            re.compile(r"\bDEBUG\b"),
-            re.compile(r"\b__debug\b"),
-            re.compile(r"LLDB"),
-            re.compile(r"lldb"),
-            re.compile(r"OSLog"),
-        ]
-        hits = []
-        for line in lines:
-            for p in patterns:
-                if p.search(line):
-                    hits.append(line.strip()[:200])
-                    break
-        return list(dict.fromkeys(hits))  # deduplicate, preserve order
-    except Exception:
-        return []
-
-
-def check(binary_path: Path, info_plist: dict) -> list[Finding]:
+def check(ctx: CheckContext) -> list[Finding]:
     findings: list[Finding] = []
 
     # --- 1. Dangerous entitlements ---
-    entitlements = _read_entitlements(binary_path)
+    entitlements = _read_entitlements(ctx.binary_path)
     for key, (severity, desc) in DANGEROUS_ENTITLEMENTS.items():
-        val = entitlements.get(key)
-        if val is True:
+        if entitlements.get(key) is True:
             findings.append(
                 Finding(
                     rule_id="IOS-DBG-004a",
@@ -106,29 +89,38 @@ def check(binary_path: Path, info_plist: dict) -> list[Finding]:
             )
 
     # --- 2. Debug strings in binary ---
-    debug_strings = _check_binary_strings_for_debug(binary_path)
-    if debug_strings:
+    debug_hits: list[str] = []
+    for line in ctx.strings:
+        for pattern in _DEBUG_STRING_PATTERNS:
+            if pattern.search(line):
+                debug_hits.append(line.strip()[:200])
+                break  # one match per line is enough
+    # Deduplicate while preserving first-seen order
+    debug_hits = list(dict.fromkeys(debug_hits))
+
+    if debug_hits:
         findings.append(
             Finding(
                 rule_id="IOS-DBG-004b",
                 title="Debug/logging strings present in release binary",
                 severity=Severity.LOW,
                 description=(
-                    f"{len(debug_strings)} debug-related string(s) found (NSLog, print, DEBUG, LLDB, etc.). "
+                    f"{len(debug_hits)} debug-related string(s) found "
+                    "(NSLog, print, DEBUG, LLDB, etc.). "
                     "These can leak internal state and help attackers understand app flow."
                 ),
-                evidence="\n".join(debug_strings[:15]),
+                evidence="\n".join(debug_hits[:EVIDENCE_DEBUG_SAMPLE]),
                 recommendation=(
                     "Wrap debug logs in #if DEBUG preprocessor guards. "
                     "Use os_log with appropriate privacy levels for production logging."
                 ),
-                extra={"total_debug_strings": len(debug_strings)},
+                extra={"total_debug_strings": len(debug_hits)},
                 masvs="MASVS-RESILIENCE-2",
             )
         )
 
     # --- 3. Info.plist: NSAssertionsEnabled ---
-    if info_plist.get("NSAssertionsEnabled") is True:
+    if ctx.info_plist.get("NSAssertionsEnabled") is True:
         findings.append(
             Finding(
                 rule_id="IOS-DBG-004c",

@@ -6,36 +6,36 @@ or Swift mangled symbols that assist reverse engineering.
 
 from __future__ import annotations
 
-import lief
-from pathlib import Path
-
+from shingan.core.binary import CheckContext
+from shingan.core.constants import EVIDENCE_OBJC_SAMPLE, EVIDENCE_SWIFT_SAMPLE
 from shingan.core.models import Finding, Severity
 
 
-def check(binary_path: Path) -> list[Finding]:
+def check(ctx: CheckContext) -> list[Finding]:
     findings: list[Finding] = []
-
-    binary = lief.parse(str(binary_path))
+    binary = ctx.lief_binary
     if binary is None:
         return findings
 
     # --- 1. Debug symbols (STABS / DWARF) ---
-    debug_syms: list[str] = []
-    for sym in binary.symbols:
-        # STABS debug symbols start with N_SO, N_FUN, etc. (type >= 0x20 odd)
-        if hasattr(sym, "type") and sym.type != lief.MachO.Symbol.TYPE.UNDEFINED:
-            name = sym.name
-            if name.startswith("_") or name.startswith("$"):
-                debug_syms.append(name)
+    try:
+        import lief  # type: ignore[import]
 
-    # Narrower signal: look for typical debug-only symbols
-    suspicious = [
-        s
-        for s in debug_syms
-        if any(
-            marker in s for marker in ["__debug", "_DWARF", "llvm_dbg", "__sanitizer"]
-        )
-    ]
+        suspicious = [
+            sym.name
+            for sym in binary.symbols
+            if (
+                hasattr(sym, "type")
+                and sym.type != lief.MachO.Symbol.TYPE.UNDEFINED
+                and any(
+                    marker in sym.name
+                    for marker in ["__debug", "_DWARF", "llvm_dbg", "__sanitizer"]
+                )
+            )
+        ]
+    except Exception:
+        suspicious = []
+
     if suspicious:
         findings.append(
             Finding(
@@ -56,15 +56,10 @@ def check(binary_path: Path) -> list[Finding]:
         )
 
     # --- 2. Objective-C class/method metadata ---
-    objc_classes: list[str] = []
-    try:
-        for cls in binary.objc_classes:
-            objc_classes.append(cls.name)
-    except Exception:
-        pass
-
+    objc_classes = ctx.objc_classes
     if objc_classes:
-        sample = objc_classes[:30]
+        sample = objc_classes[:EVIDENCE_OBJC_SAMPLE]
+        overflow = len(objc_classes) - EVIDENCE_OBJC_SAMPLE
         findings.append(
             Finding(
                 rule_id="IOS-SYM-001b",
@@ -75,11 +70,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Class and method names expose application structure to attackers."
                 ),
                 evidence="\n".join(sample)
-                + (
-                    f"\n… and {len(objc_classes) - 30} more"
-                    if len(objc_classes) > 30
-                    else ""
-                ),
+                + (f"\n… and {overflow} more" if overflow > 0 else ""),
                 recommendation=(
                     "Consider using a Swift-based implementation where possible, or apply "
                     "an obfuscation tool (e.g. iXGuard, Guardsquare) to rename symbols in release builds."
@@ -91,12 +82,12 @@ def check(binary_path: Path) -> list[Finding]:
 
     # --- 3. Swift symbols (demanglable = readable names) ---
     swift_syms = [
-        sym.name
-        for sym in binary.symbols
-        if sym.name.startswith("$s") or sym.name.startswith("_$s")
+        name
+        for name in ctx.symbol_names
+        if name.startswith("$s") or name.startswith("_$s")
     ]
     if swift_syms:
-        sample = swift_syms[:20]
+        sample = swift_syms[:EVIDENCE_SWIFT_SAMPLE]
         findings.append(
             Finding(
                 rule_id="IOS-SYM-001c",

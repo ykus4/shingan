@@ -275,6 +275,6 @@ def _print_table(result):
     console.print(
         f"[bold red]{summary['high']} high[/bold red]  "
         f"[bold yellow]{summary['medium']} medium[/bold yellow]  "
-        f"[bold green]{summary['low']} low[/bold low]  "
+        f"[bold green]{summary['low']} low[/bold green]  "
         f"[cyan]{summary['info']} info[/cyan]"
     )

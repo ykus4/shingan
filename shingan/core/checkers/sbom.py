@@ -6,9 +6,9 @@ Flags SDKs with known vulnerability history.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
+from shingan.core.binary import CheckContext
 from shingan.core.models import Finding, Severity
 
 # (sdk_name, indicators, known_issues)
@@ -43,99 +43,74 @@ SDK_SIGNATURES: list[tuple[str, list[str], str | None]] = [
         ["JSPatch", "JPEngine"],
         "JSPatch enables remote code execution — violates App Store Review Guidelines 2.5.2",
     ),
-    (
-        "React Native",
-        ["RCTBridge", "ReactNative", "react-native"],
-        None,
-    ),
-    (
-        "Cordova/PhoneGap",
-        ["CDVViewController", "Cordova", "phonegap"],
-        None,
-    ),
+    ("React Native", ["RCTBridge", "ReactNative", "react-native"], None),
+    ("Cordova/PhoneGap", ["CDVViewController", "Cordova", "phonegap"], None),
 ]
 
 
-def _get_strings(binary_path: Path) -> set[str]:
-    try:
-        result = subprocess.run(
-            ["strings", "-a", "-n", "5", str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return set(result.stdout.splitlines())
-    except Exception:
-        return set()
-
-
 def _scan_frameworks(app_dir: Path) -> list[str]:
-    framework_names = []
-    for fw in (
-        (app_dir / "Frameworks").glob("*.framework")
-        if (app_dir / "Frameworks").exists()
-        else []
-    ):
-        framework_names.append(fw.stem)
-    for fw in (
-        (app_dir / "PlugIns").glob("*.appex") if (app_dir / "PlugIns").exists() else []
-    ):
-        framework_names.append(fw.stem)
-    return framework_names
+    names: list[str] = []
+    fw_dir = app_dir / "Frameworks"
+    if fw_dir.exists():
+        names.extend(fw.stem for fw in fw_dir.glob("*.framework"))
+    plugins_dir = app_dir / "PlugIns"
+    if plugins_dir.exists():
+        names.extend(fw.stem for fw in plugins_dir.glob("*.appex"))
+    return names
 
 
-def check(binary_path: Path, app_dir: Path | None = None) -> list[Finding]:
+def check(ctx: CheckContext) -> list[Finding]:
     findings: list[Finding] = []
-    strings = _get_strings(binary_path)
-    framework_names = _scan_frameworks(app_dir) if app_dir else []
-    all_text = strings | set(framework_names)
+
+    framework_names = _scan_frameworks(ctx.app_dir) if ctx.app_dir else []
+    corpus = ctx.strings | set(framework_names)
 
     detected: list[tuple[str, str | None]] = []
     for sdk_name, indicators, known_issue in SDK_SIGNATURES:
-        if any(ind in t for ind in indicators for t in all_text):
+        if any(ind in t for ind in indicators for t in corpus):
             detected.append((sdk_name, known_issue))
 
-    if detected:
-        # Separate flagged vs clean
-        flagged = [(n, i) for n, i in detected if i]
-        clean = [n for n, i in detected if not i]
+    if not detected:
+        return findings
 
-        if flagged:
-            for sdk_name, issue in flagged:
-                findings.append(
-                    Finding(
-                        rule_id="IOS-DEP-011",
-                        title=f"SDK with known issue detected: {sdk_name}",
-                        severity=Severity.HIGH,
-                        description=f"{sdk_name} detected. Known issue: {issue}",
-                        evidence=sdk_name,
-                        recommendation=(
-                            "Review the SDK's current version and known CVEs. "
-                            "If using JSPatch or similar dynamic code execution SDKs, "
-                            "remove them — they violate App Store policy."
-                        ),
-                        masvs="MASVS-SUPPLY-CHAIN-1",
-                    )
-                )
+    flagged = [(n, i) for n, i in detected if i]
+    clean = [n for n, i in detected if not i]
 
-        if clean:
-            findings.append(
-                Finding(
-                    rule_id="IOS-DEP-011",
-                    title=f"Third-party SDKs detected ({len(clean)})",
-                    severity=Severity.INFO,
-                    description=(
-                        f"{len(clean)} SDK(s) identified: {', '.join(clean)}. "
-                        "No known critical issues flagged statically, but verify versions."
-                    ),
-                    evidence="\n".join(clean),
-                    recommendation=(
-                        "Keep all dependencies up to date. "
-                        "Use `uv audit` or similar tools to track CVEs in dependencies."
-                    ),
-                    extra={"sdks": clean},
-                    masvs="MASVS-SUPPLY-CHAIN-1",
-                )
+    for sdk_name, issue in flagged:
+        findings.append(
+            Finding(
+                rule_id="IOS-DEP-011",
+                title=f"SDK with known issue detected: {sdk_name}",
+                severity=Severity.HIGH,
+                description=f"{sdk_name} detected. Known issue: {issue}",
+                evidence=sdk_name,
+                recommendation=(
+                    "Review the SDK's current version and known CVEs. "
+                    "If using JSPatch or similar dynamic code execution SDKs, "
+                    "remove them — they violate App Store policy."
+                ),
+                masvs="MASVS-SUPPLY-CHAIN-1",
             )
+        )
+
+    if clean:
+        findings.append(
+            Finding(
+                rule_id="IOS-DEP-011",
+                title=f"Third-party SDKs detected ({len(clean)})",
+                severity=Severity.INFO,
+                description=(
+                    f"{len(clean)} SDK(s) identified: {', '.join(clean)}. "
+                    "No known critical issues flagged statically, but verify versions."
+                ),
+                evidence="\n".join(clean),
+                recommendation=(
+                    "Keep all dependencies up to date. "
+                    "Use `uv audit` or similar tools to track CVEs in dependencies."
+                ),
+                extra={"sdks": clean},
+                masvs="MASVS-SUPPLY-CHAIN-1",
+            )
+        )
 
     return findings

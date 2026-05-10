@@ -9,17 +9,11 @@ is effective — dynamic testing (objection/frida) is required for that.
 
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
-
-import lief
-
+from shingan.core.binary import CheckContext
 from shingan.core.models import Finding, Severity
-
 
 # --- Jailbreak detection indicators ---
 JAILBREAK_STRINGS = [
-    # File-system checks
     "/Applications/Cydia.app",
     "/Applications/blackra1n.app",
     "/Applications/FakeCarrier.app",
@@ -38,9 +32,7 @@ JAILBREAK_STRINGS = [
     "/usr/libexec/sftp-server",
     "/usr/sbin/sshd",
     "/etc/apt",
-    # Symbolic link / sandbox escape
     "/.bootstrapped_electra",
-    # API-based
     "cydia://",
     "MobileSubstrate",
     "substrate",
@@ -79,7 +71,7 @@ SSL_PINNING_STRINGS = [
     "pinnedCertificate",
     "pinnedPublicKey",
     "NSPinnedDomains",
-    "AFSSLPinningMode",  # AFNetworking
+    "AFSSLPinningMode",
     "validatesDomainName",
     "SecTrustEvaluate",
     "SecCertificateCopyData",
@@ -87,51 +79,28 @@ SSL_PINNING_STRINGS = [
 ]
 
 
-def _get_strings(binary_path: Path) -> set[str]:
-    try:
-        result = subprocess.run(
-            ["strings", "-a", "-n", "5", str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return set(result.stdout.splitlines())
-    except Exception:
-        return set()
+def _match_indicators(indicators: list[str], corpus: set[str]) -> list[str]:
+    """Return corpus entries that contain any of the indicator strings (case-insensitive)."""
+    hits: list[str] = []
+    for ind in indicators:
+        ind_lower = ind.lower()
+        for text in corpus:
+            if ind_lower in text.lower():
+                hits.append(text.strip()[:150])
+                break  # one corpus entry per indicator is enough
+    return hits
 
 
-def _get_symbol_names(binary_path: Path) -> list[str]:
-    try:
-        binary = lief.parse(str(binary_path))
-        if binary is None:
-            return []
-        return [sym.name for sym in binary.symbols]
-    except Exception:
-        return []
-
-
-def check(binary_path: Path) -> list[Finding]:
+def check(ctx: CheckContext) -> list[Finding]:
     findings: list[Finding] = []
-
-    strings = _get_strings(binary_path)
-    symbols = _get_symbol_names(binary_path)
-    all_text = strings | set(symbols)
-
-    def _matches(indicators: list[str]) -> list[str]:
-        found = []
-        for ind in indicators:
-            for text in all_text:
-                if ind.lower() in text.lower():
-                    found.append(text.strip()[:150])
-                    break
-        return found
+    corpus = ctx.all_text
 
     # --- 1. Jailbreak detection ---
-    jb_hits = _matches(JAILBREAK_STRINGS)
+    jb_hits = _match_indicators(JAILBREAK_STRINGS, corpus)
     if jb_hits:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-005a",
+                rule_id="IOS-RASP-005a-found",
                 title="Jailbreak detection indicators found",
                 severity=Severity.INFO,
                 description=(
@@ -151,7 +120,7 @@ def check(binary_path: Path) -> list[Finding]:
     else:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-005a",
+                rule_id="IOS-RASP-005a-missing",
                 title="No jailbreak detection indicators found",
                 severity=Severity.MEDIUM,
                 description=(
@@ -168,11 +137,11 @@ def check(binary_path: Path) -> list[Finding]:
         )
 
     # --- 2. Frida / instrumentation detection ---
-    frida_hits = _matches(FRIDA_STRINGS)
+    frida_hits = _match_indicators(FRIDA_STRINGS, corpus)
     if frida_hits:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-005b",
+                rule_id="IOS-RASP-005b-found",
                 title="Frida/dynamic instrumentation detection indicators found",
                 severity=Severity.INFO,
                 description=(
@@ -188,7 +157,7 @@ def check(binary_path: Path) -> list[Finding]:
     else:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-005b",
+                rule_id="IOS-RASP-005b-missing",
                 title="No Frida/dynamic instrumentation detection found",
                 severity=Severity.MEDIUM,
                 description=(
@@ -205,15 +174,16 @@ def check(binary_path: Path) -> list[Finding]:
         )
 
     # --- 3. LLDB / debugger detection ---
-    lldb_hits = _matches(LLDB_STRINGS)
+    lldb_hits = _match_indicators(LLDB_STRINGS, corpus)
     if lldb_hits:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-005c",
+                rule_id="IOS-RASP-005c-found",
                 title="Debugger detection indicators found (ptrace/sysctl)",
                 severity=Severity.INFO,
                 description=(
-                    f"{len(lldb_hits)} debugger-detection indicator(s) found (ptrace, PT_DENY_ATTACH, etc.)."
+                    f"{len(lldb_hits)} debugger-detection indicator(s) found "
+                    "(ptrace, PT_DENY_ATTACH, etc.)."
                 ),
                 evidence="\n".join(lldb_hits[:10]),
                 recommendation="Verify that PT_DENY_ATTACH is called early in app launch.",
@@ -223,15 +193,17 @@ def check(binary_path: Path) -> list[Finding]:
     else:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-005c",
+                rule_id="IOS-RASP-005c-missing",
                 title="No debugger detection (ptrace/PT_DENY_ATTACH) found",
                 severity=Severity.MEDIUM,
                 description=(
-                    "No debugger-detection strings found. LLDB can attach to the app without resistance."
+                    "No debugger-detection strings found. "
+                    "LLDB can attach to the app without resistance."
                 ),
                 evidence="(none found)",
                 recommendation=(
-                    "Call ptrace(PT_DENY_ATTACH, 0, 0, 0) early in main() or application:didFinishLaunching. "
+                    "Call ptrace(PT_DENY_ATTACH, 0, 0, 0) early in main() or "
+                    "application:didFinishLaunching. "
                     "Note: this is a deterrent, not a complete protection."
                 ),
                 masvs="MASVS-RESILIENCE-4",
@@ -239,11 +211,11 @@ def check(binary_path: Path) -> list[Finding]:
         )
 
     # --- 4. SSL Pinning ---
-    ssl_hits = _matches(SSL_PINNING_STRINGS)
+    ssl_hits = _match_indicators(SSL_PINNING_STRINGS, corpus)
     if ssl_hits:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-005d",
+                rule_id="IOS-RASP-005d-found",
                 title="SSL pinning indicators found",
                 severity=Severity.INFO,
                 description=(
@@ -262,7 +234,7 @@ def check(binary_path: Path) -> list[Finding]:
     else:
         findings.append(
             Finding(
-                rule_id="IOS-RASP-005d",
+                rule_id="IOS-RASP-005d-missing",
                 title="No SSL pinning indicators found",
                 severity=Severity.MEDIUM,
                 description=(
