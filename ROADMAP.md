@@ -1,104 +1,103 @@
-# shingan — ROADMAP
+# shingan — Roadmap
 
-> **コンセプト**: 「難読化するツール」より前に「どこが解析されやすいか可視化するツール」
+> **Concept**: Before "how do I obfuscate my app?", answer "where is my app exposed?" — shingan makes that visible.
 
 ---
 
-## v0.1 — MVP (静的解析) ✅
+## v0.1 — MVP (static analysis) ✅
 
-### チェック項目 (Must)
-| Rule ID | 内容 | 実装 |
+### Checks (Must-have)
+| Rule ID | What it detects | Status |
 |---|---|---|
-| IOS-SYM-001 | シンボル残存 (debug symbols / ObjC metadata / Swift symbols) | ✅ |
-| IOS-SEC-002 | APIキー・シークレット平文埋め込み (regex + entropy) | ✅ |
-| IOS-SEC-002 | URL / endpoint 露出 | ✅ |
-| IOS-DBG-004 | Debug flag残存 (entitlements / NSLog strings) | ✅ |
-| IOS-ATS-003 | ATS設定不備 (NSAllowsArbitraryLoads 等) | ✅ |
-| IOS-RASP-005 | Jailbreak検知 指標有無 | ✅ |
-| IOS-RASP-005 | Frida / LLDB対策 指標有無 | ✅ |
-| IOS-RASP-005 | SSL Pinning 指標有無 | ✅ |
+| IOS-SYM-001 | Debug symbols, ObjC class metadata, Swift mangled symbols | ✅ |
+| IOS-SEC-002 | Hardcoded API keys / secrets (regex + entropy) | ✅ |
+| IOS-SEC-002 | Hardcoded URLs / endpoints | ✅ |
+| IOS-DBG-004 | Debug flags in release binary (entitlements, NSLog strings) | ✅ |
+| IOS-ATS-003 | ATS misconfiguration (NSAllowsArbitraryLoads, etc.) | ✅ |
+| IOS-RASP-005 | Jailbreak detection — present or absent | ✅ |
+| IOS-RASP-005 | Frida / LLDB anti-tamper — present or absent | ✅ |
+| IOS-RASP-005 | SSL pinning — present or absent | ✅ |
 
-### インフラ
-- [x] FastAPI + Web UI (IPA upload → 結果表示)
-- [x] CLI (`shingan scan`, `shingan list`, `shingan diff`, `shingan export`, `shingan serve`)
-- [x] JSON / SARIF / HTML レポート出力
-- [x] diff/baseline比較 (新規/修正/継続の分類)
-- [x] JSONファイルストレージ (`~/.shingan/scans/`)
-- [x] CI/CD対応 (`--fail-on high`)
-
----
-
-## v0.2 — チェック精度の向上
-
-### チェック追加
-- [ ] **IOS-RASP-006**: Binary protection flags — PIE有効化確認 (`otool -hv`)
-- [ ] **IOS-RASP-007**: Stack canary有効化確認
-- [ ] **IOS-RASP-008**: ARC (Automatic Reference Counting) 有効確認
-- [ ] **IOS-SEC-009**: Keychain保護レベル確認 (kSecAttrAccessible* の使用箇所)
-- [ ] **IOS-SEC-010**: 弱い暗号アルゴリズム使用検出 (MD5, SHA1, ECB mode等)
-- [ ] **IOS-DEP-011**: 既知脆弱性を持つサードパーティSDK検出 (SBOM fingerprinting)
-- [ ] **IOS-META-012**: バックグラウンドモード・過剰なpermission検出
-
-### 精度向上
-- [ ] シークレット検出に validation レイヤー追加 (AWS key フォーマット検証等)
-- [ ] confidence score 導入 (pattern_score × validation_score)
-- [ ] false positive 抑制リスト (allowlist/suppression)
-- [ ] xcarchive / .app バンドル直接入力対応
+### Infrastructure
+- [x] FastAPI + web UI (drag-and-drop IPA upload → results)
+- [x] CLI (`scan`, `list`, `diff`, `export`, `serve`)
+- [x] JSON / SARIF / HTML report output
+- [x] Diff / baseline comparison (new / fixed / persisted)
+- [x] JSON file storage (`~/.shingan/scans/`)
+- [x] CI/CD support (`--fail-on high`)
 
 ---
 
-## v0.3 — UX / 統合強化
+## v0.2 — Accuracy improvements
+
+### New checks
+- [ ] **IOS-RASP-006**: PIE enabled (`otool -hv`)
+- [ ] **IOS-RASP-007**: Stack canary enabled
+- [ ] **IOS-RASP-008**: ARC (Automatic Reference Counting) enabled
+- [ ] **IOS-SEC-009**: Keychain access level (`kSecAttrAccessible*` usage)
+- [ ] **IOS-SEC-010**: Weak crypto detection (MD5, SHA1, ECB mode, etc.)
+- [ ] **IOS-DEP-011**: Third-party SDK vulnerability fingerprinting (SBOM)
+- [ ] **IOS-META-012**: Over-privileged background modes / permissions
+
+### Detection quality
+- [ ] Secret validation layer (verify AWS key format, etc.)
+- [ ] Two-stage confidence scoring (`pattern_score × validation_score`)
+- [ ] False positive suppression (allowlist / per-finding suppress)
+- [ ] Direct `.app` bundle and `xcarchive` input support
+
+---
+
+## v0.3 — UX and integrations
 
 ### Web UI
-- [ ] スキャン一覧でのdiff比較UI (バージョン選択 → 差分ハイライト)
-- [ ] ファインディングごとのsuppress操作
-- [ ] PDF エクスポート
-- [ ] ダークモード以外のテーマ選択
+- [ ] Diff comparison UI — select two scans, highlight delta
+- [ ] Per-finding suppress action
+- [ ] PDF export
+- [ ] Light mode theme
 
 ### CI/CD
-- [ ] GitHub Actions 公式 Action 化 (`shingan/action@v1`)
-- [ ] GitLab CI サンプル追加
-- [ ] Fastlane plugin化
-- [ ] JIRA / Slack webhook 通知
+- [ ] Official GitHub Actions action (`shingan/action@v1`)
+- [ ] GitLab CI example
+- [ ] Fastlane plugin
+- [ ] JIRA / Slack webhook notifications
 
 ### API
-- [ ] `POST /api/suppressions` — false positive 抑制
-- [ ] `POST /api/baselines/{app_id}` — アプリごとのbaseline固定
-- [ ] OpenAPI ドキュメント整備
+- [ ] `POST /api/suppressions`
+- [ ] `POST /api/baselines/{app_id}`
+- [ ] Full OpenAPI docs
 
 ---
 
-## v0.4 — 動的解析連携 (TODO)
+## v0.4 — Dynamic analysis (TODO)
 
-> 静的シグナルだけでは「保護の指標があるか」しか分からない。  
-> 保護が**実際に有効か**を確認するには動的解析が必要。
+> Static signals can only tell you whether a protection *indicator exists*.
+> Confirming that a protection *actually works* requires dynamic testing.
 
-- [ ] **Frida スクリプト連携**: SSL pinning bypass 試行 → bypass可否を報告
-- [ ] **objection 連携**: jailbreak detection bypass 試行
-- [ ] **PT_DENY_ATTACH 有効性確認**: LLDB attach 試行 → detach結果を記録
-- [ ] **実機/Simulator 実行モード**: `shingan scan --dynamic --device <udid>`
-- [ ] 静的+動的の統合スコアリング
-
----
-
-## v1.0 — プロダクション対応
-
-- [ ] マルチユーザー対応 (認証 / team workspace)
-- [ ] SQLite / PostgreSQL ストレージ移行
-- [ ] カスタムYAMLルール対応 (ユーザー定義チェック)
-- [ ] MASVS/MASTG チェックリストへの完全マッピング
-- [ ] レポートの日本語/英語切り替え
-- [ ] Docker イメージ / Homebrew formula
+- [ ] **Frida script integration**: attempt SSL pinning bypass → report result
+- [ ] **objection integration**: attempt jailbreak detection bypass
+- [ ] **PT_DENY_ATTACH effectiveness**: attempt LLDB attach → record outcome
+- [ ] **Real device / Simulator mode**: `shingan scan --dynamic --device <udid>`
+- [ ] Combined static + dynamic scoring
 
 ---
 
-## 技術的な差別化方針
+## v1.0 — Production-ready
 
-| 商用製品の強み | OSSの強み | shingan が狙う中間 |
+- [ ] Multi-user support (auth / team workspaces)
+- [ ] SQLite / PostgreSQL storage backend
+- [ ] Custom YAML rule engine (user-defined checks)
+- [ ] Full MASVS / MASTG checklist mapping
+- [ ] Localization (English / Japanese reports)
+- [ ] Docker image / Homebrew formula
+
+---
+
+## Differentiation
+
+| Commercial tools | OSS tools | shingan targets |
 |---|---|---|
-| 広いカバレッジ | 透明性・検証容易性 | **mobile-native の使いやすさ + OSS的な可観測性** |
-| CI統合 | カスタマイズ性 | **説明可能なルール + diff管理** |
-| ブラックボックス | 要セットアップ | **IPAを放り込めばすぐ結果** |
+| Broad coverage | Transparency & auditability | **Mobile-native UX + OSS-level observability** |
+| CI integration | Highly customizable | **Explainable rules + diff management** |
+| Black box | Requires setup | **Drop in an IPA, get results immediately** |
 
-> 最大の差別化: **「前回から何が増えたか」を明快に出す diff 機能**  
-> 既知の問題はbaselineに残し、新規検出のみCIをfailにする運用をサポートする。
+**Key differentiator**: clear diff output — "what changed since last build?" — so CI only fails on genuinely new findings, not accumulated backlog.
