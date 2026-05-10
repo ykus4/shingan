@@ -1,4 +1,4 @@
-"""IPA ingestion: unzip, locate .app bundle and main binary."""
+"""Ingestion: supports .ipa, .app (directory), and .xcarchive inputs."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from pathlib import Path
 
 @dataclass
 class IPABundle:
-    ipa_path: Path
-    work_dir: Path
-    app_dir: Path
-    binary_path: Path
+    ipa_path: Path  # original input path
+    work_dir: Path  # temp extraction directory (may equal ipa_path for .app)
+    app_dir: Path  # path to the .app bundle
+    binary_path: Path  # main executable
     info_plist: dict = field(default_factory=dict)
     entitlements_path: Path | None = None
     _owned: bool = False  # True if we created work_dir and should clean it up
@@ -31,12 +31,60 @@ class IPABundle:
         self.cleanup()
 
 
-def ingest(ipa_path: Path, work_dir: Path | None = None) -> IPABundle:
-    """Extract IPA and return an IPABundle with resolved paths."""
-    ipa_path = Path(ipa_path).resolve()
-    if not ipa_path.exists():
-        raise FileNotFoundError(f"IPA not found: {ipa_path}")
+def ingest(input_path: Path, work_dir: Path | None = None) -> IPABundle:
+    """Accept .ipa, .app directory, or .xcarchive and return a resolved IPABundle."""
+    input_path = Path(input_path).resolve()
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input not found: {input_path}")
 
+    suffix = input_path.suffix.lower()
+
+    if suffix == ".ipa":
+        return _ingest_ipa(input_path, work_dir)
+    elif suffix == ".app" and input_path.is_dir():
+        return _ingest_app(input_path)
+    elif suffix == ".xcarchive" and input_path.is_dir():
+        return _ingest_xcarchive(input_path, work_dir)
+    elif input_path.is_dir() and any(input_path.glob("*.app")):
+        # bare directory containing a .app
+        app_dirs = list(input_path.glob("*.app"))
+        return _ingest_app(app_dirs[0])
+    else:
+        raise ValueError(
+            f"Unsupported input: {input_path}. "
+            "Accepted: .ipa file, .app directory, .xcarchive directory."
+        )
+
+
+def _resolve_app(
+    app_dir: Path, source_path: Path, work_dir: Path, owned: bool
+) -> IPABundle:
+    info_plist_path = app_dir / "Info.plist"
+    if not info_plist_path.exists():
+        raise ValueError(f"Info.plist not found in {app_dir}")
+
+    with open(info_plist_path, "rb") as f:
+        info_plist = plistlib.load(f)
+
+    bundle_executable = info_plist.get("CFBundleExecutable")
+    if not bundle_executable:
+        raise ValueError("Info.plist missing CFBundleExecutable")
+
+    binary_path = app_dir / bundle_executable
+    if not binary_path.exists():
+        raise ValueError(f"Binary not found: {binary_path}")
+
+    return IPABundle(
+        ipa_path=source_path,
+        work_dir=work_dir,
+        app_dir=app_dir,
+        binary_path=binary_path,
+        info_plist=info_plist,
+        _owned=owned,
+    )
+
+
+def _ingest_ipa(ipa_path: Path, work_dir: Path | None) -> IPABundle:
     owned = work_dir is None
     if owned:
         work_dir = Path(tempfile.mkdtemp(prefix="shingan_"))
@@ -54,30 +102,23 @@ def ingest(ipa_path: Path, work_dir: Path | None = None) -> IPABundle:
     app_dirs = list(payload.glob("*.app"))
     if not app_dirs:
         raise ValueError("Invalid IPA: no .app bundle found in Payload/")
-    app_dir = app_dirs[0]
 
-    info_plist_path = app_dir / "Info.plist"
-    if not info_plist_path.exists():
-        raise ValueError("Invalid IPA: Info.plist not found")
+    return _resolve_app(app_dirs[0], ipa_path, work_dir, owned)
 
-    with open(info_plist_path, "rb") as f:
-        info_plist = plistlib.load(f)
 
-    bundle_executable = info_plist.get("CFBundleExecutable")
-    if not bundle_executable:
-        raise ValueError("Info.plist missing CFBundleExecutable")
+def _ingest_app(app_dir: Path) -> IPABundle:
+    """Use a .app directory directly (no extraction needed)."""
+    return _resolve_app(app_dir, app_dir, app_dir.parent, owned=False)
 
-    binary_path = app_dir / bundle_executable
-    if not binary_path.exists():
-        raise ValueError(f"Binary not found: {binary_path}")
 
-    # entitlements are embedded in the binary (codesign) — resolved later by checkers
-    bundle = IPABundle(
-        ipa_path=ipa_path,
-        work_dir=work_dir,
-        app_dir=app_dir,
-        binary_path=binary_path,
-        info_plist=info_plist,
-        _owned=owned,
-    )
-    return bundle
+def _ingest_xcarchive(xcarchive_path: Path, work_dir: Path | None) -> IPABundle:
+    """Extract the .app from an .xcarchive Products/Applications/ directory."""
+    apps_dir = xcarchive_path / "Products" / "Applications"
+    if not apps_dir.exists():
+        raise ValueError(f"xcarchive has no Products/Applications: {xcarchive_path}")
+
+    app_dirs = list(apps_dir.glob("*.app"))
+    if not app_dirs:
+        raise ValueError(f"No .app found in xcarchive Applications: {xcarchive_path}")
+
+    return _resolve_app(app_dirs[0], xcarchive_path, xcarchive_path, owned=False)

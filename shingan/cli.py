@@ -69,8 +69,21 @@ def cli():
     help="Persist scan result to local store",
 )
 @click.option("--baseline", default=None, help="Scan ID to diff against")
+@click.option(
+    "--lang",
+    type=click.Choice(["en", "ja"]),
+    default="en",
+    show_default=True,
+    help="Report language (HTML only)",
+)
 def scan(
-    ipa: str, fmt: str, out: str | None, fail_on: str, save: bool, baseline: str | None
+    ipa: str,
+    fmt: str,
+    out: str | None,
+    fail_on: str,
+    save: bool,
+    baseline: str | None,
+    lang: str,
 ):
     """Scan an IPA file for reverse-engineering vulnerabilities."""
     ipa_path = Path(ipa)
@@ -104,7 +117,7 @@ def scan(
             )
 
     # Output
-    output_text = _render(result, fmt, diff=diff)
+    output_text = _render(result, fmt, diff=diff, lang=lang)
 
     if out:
         Path(out).write_text(output_text, encoding="utf-8")
@@ -226,7 +239,7 @@ def serve():
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
-def _render(result, fmt: str, diff=None) -> str:
+def _render(result, fmt: str, diff=None, lang: str = "en") -> str:
     if fmt == "json":
         return to_json(result)
     if fmt == "sarif":
@@ -236,6 +249,7 @@ def _render(result, fmt: str, diff=None) -> str:
             result,
             diff_new=diff.new_fingerprints if diff else None,
             diff_fixed=diff.fixed_fingerprints if diff else None,
+            lang=lang,
         )
     return ""
 

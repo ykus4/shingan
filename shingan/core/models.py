@@ -28,6 +28,7 @@ class Finding:
     description: str
     evidence: str = ""  # snippet / detail shown in report
     recommendation: str = ""
+    masvs: str = ""  # e.g. "MASVS-RESILIENCE-1"
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -38,6 +39,7 @@ class Finding:
             "description": self.description,
             "evidence": self.evidence,
             "recommendation": self.recommendation,
+            "masvs": self.masvs,
             "extra": self.extra,
         }
 
@@ -50,6 +52,7 @@ class Finding:
             description=d["description"],
             evidence=d.get("evidence", ""),
             recommendation=d.get("recommendation", ""),
+            masvs=d.get("masvs", ""),
             extra=d.get("extra", {}),
         )
 
@@ -67,6 +70,7 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     scan_id: str = ""
     scanned_at: str = ""
+    suppressed_count: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -84,6 +88,7 @@ class ScanResult:
                 "low": sum(1 for f in self.findings if f.severity == Severity.LOW),
                 "info": sum(1 for f in self.findings if f.severity == Severity.INFO),
                 "total": len(self.findings),
+                "suppressed": self.suppressed_count,
             },
             "findings": [f.to_dict() for f in self.findings],
         }
@@ -97,6 +102,7 @@ class ScanResult:
             app_version=d["app_version"],
             build=d["build"],
             ipa_name=d["ipa_name"],
+            suppressed_count=d.get("summary", {}).get("suppressed", 0),
         )
         result.findings = [Finding.from_dict(f) for f in d.get("findings", [])]
         return result

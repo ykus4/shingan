@@ -117,6 +117,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Never embed credentials in source code or binary assets."
                 ),
                 extra={"match_count": len(hits)},
+                masvs="MASVS-NETWORK-1" if is_url else "MASVS-STORAGE-2",
             )
         )
 
@@ -147,6 +148,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Review each high-entropy string manually. Secrets should not be baked into the binary."
                 ),
                 extra={"total_high_entropy": len(high_entropy)},
+                masvs="MASVS-STORAGE-2",
             )
         )
 
