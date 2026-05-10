@@ -26,7 +26,7 @@ class Finding:
     title: str
     severity: Severity
     description: str
-    evidence: str = ""          # snippet / detail shown in report
+    evidence: str = ""  # snippet / detail shown in report
     recommendation: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -60,9 +60,9 @@ class Finding:
 
 @dataclass
 class ScanResult:
-    app_id: str          # CFBundleIdentifier
-    app_version: str     # CFBundleShortVersionString
-    build: str           # CFBundleVersion
+    app_id: str  # CFBundleIdentifier
+    app_version: str  # CFBundleShortVersionString
+    build: str  # CFBundleVersion
     ipa_name: str
     findings: list[Finding] = field(default_factory=list)
     scan_id: str = ""
@@ -78,7 +78,9 @@ class ScanResult:
             "ipa_name": self.ipa_name,
             "summary": {
                 "high": sum(1 for f in self.findings if f.severity == Severity.HIGH),
-                "medium": sum(1 for f in self.findings if f.severity == Severity.MEDIUM),
+                "medium": sum(
+                    1 for f in self.findings if f.severity == Severity.MEDIUM
+                ),
                 "low": sum(1 for f in self.findings if f.severity == Severity.LOW),
                 "info": sum(1 for f in self.findings if f.severity == Severity.INFO),
                 "total": len(self.findings),

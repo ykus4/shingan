@@ -17,7 +17,9 @@ class ScanStore:
 
     def save(self, result: ScanResult) -> Path:
         path = self.directory / f"{result.scan_id}.json"
-        path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         return path
 
     def load(self, scan_id: str) -> ScanResult:
@@ -29,20 +31,24 @@ class ScanStore:
 
     def list_scans(self, app_id: str | None = None) -> list[dict]:
         results = []
-        for p in sorted(self.directory.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+        for p in sorted(
+            self.directory.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True
+        ):
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 if app_id and data.get("app_id") != app_id:
                     continue
-                results.append({
-                    "scan_id": data.get("scan_id"),
-                    "scanned_at": data.get("scanned_at"),
-                    "app_id": data.get("app_id"),
-                    "app_version": data.get("app_version"),
-                    "build": data.get("build"),
-                    "ipa_name": data.get("ipa_name"),
-                    "summary": data.get("summary", {}),
-                })
+                results.append(
+                    {
+                        "scan_id": data.get("scan_id"),
+                        "scanned_at": data.get("scanned_at"),
+                        "app_id": data.get("app_id"),
+                        "app_version": data.get("app_version"),
+                        "build": data.get("build"),
+                        "ipa_name": data.get("ipa_name"),
+                        "summary": data.get("summary", {}),
+                    }
+                )
             except Exception:
                 continue
         return results

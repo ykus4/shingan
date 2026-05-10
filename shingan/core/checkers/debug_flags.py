@@ -41,7 +41,8 @@ def _read_entitlements(binary_path: Path) -> dict:
     try:
         result = subprocess.run(
             ["codesign", "-d", "--entitlements", ":-", str(binary_path)],
-            capture_output=True, timeout=30
+            capture_output=True,
+            timeout=30,
         )
         raw = result.stdout
         if not raw:
@@ -56,7 +57,9 @@ def _check_binary_strings_for_debug(binary_path: Path) -> list[str]:
     try:
         result = subprocess.run(
             ["strings", "-a", "-n", "6", str(binary_path)],
-            capture_output=True, text=True, timeout=60
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         lines = result.stdout.splitlines()
         patterns = [
@@ -87,46 +90,52 @@ def check(binary_path: Path, info_plist: dict) -> list[Finding]:
     for key, (severity, desc) in DANGEROUS_ENTITLEMENTS.items():
         val = entitlements.get(key)
         if val is True:
-            findings.append(Finding(
-                rule_id="IOS-DBG-004a",
-                title=f"Dangerous entitlement present: {key}",
-                severity=severity,
-                description=desc,
-                evidence=f"{key} = true",
-                recommendation=(
-                    f"Remove '{key}' from your release build entitlements. "
-                    "This is typically set only in debug/development provisioning profiles."
-                ),
-            ))
+            findings.append(
+                Finding(
+                    rule_id="IOS-DBG-004a",
+                    title=f"Dangerous entitlement present: {key}",
+                    severity=severity,
+                    description=desc,
+                    evidence=f"{key} = true",
+                    recommendation=(
+                        f"Remove '{key}' from your release build entitlements. "
+                        "This is typically set only in debug/development provisioning profiles."
+                    ),
+                )
+            )
 
     # --- 2. Debug strings in binary ---
     debug_strings = _check_binary_strings_for_debug(binary_path)
     if debug_strings:
-        findings.append(Finding(
-            rule_id="IOS-DBG-004b",
-            title="Debug/logging strings present in release binary",
-            severity=Severity.LOW,
-            description=(
-                f"{len(debug_strings)} debug-related string(s) found (NSLog, print, DEBUG, LLDB, etc.). "
-                "These can leak internal state and help attackers understand app flow."
-            ),
-            evidence="\n".join(debug_strings[:15]),
-            recommendation=(
-                "Wrap debug logs in #if DEBUG preprocessor guards. "
-                "Use os_log with appropriate privacy levels for production logging."
-            ),
-            extra={"total_debug_strings": len(debug_strings)},
-        ))
+        findings.append(
+            Finding(
+                rule_id="IOS-DBG-004b",
+                title="Debug/logging strings present in release binary",
+                severity=Severity.LOW,
+                description=(
+                    f"{len(debug_strings)} debug-related string(s) found (NSLog, print, DEBUG, LLDB, etc.). "
+                    "These can leak internal state and help attackers understand app flow."
+                ),
+                evidence="\n".join(debug_strings[:15]),
+                recommendation=(
+                    "Wrap debug logs in #if DEBUG preprocessor guards. "
+                    "Use os_log with appropriate privacy levels for production logging."
+                ),
+                extra={"total_debug_strings": len(debug_strings)},
+            )
+        )
 
     # --- 3. Info.plist: NSAssertionsEnabled ---
     if info_plist.get("NSAssertionsEnabled") is True:
-        findings.append(Finding(
-            rule_id="IOS-DBG-004c",
-            title="NSAssertionsEnabled is true in Info.plist",
-            severity=Severity.LOW,
-            description="Assertions are enabled, which may expose internal error messages.",
-            evidence="NSAssertionsEnabled = true",
-            recommendation="Set NSAssertionsEnabled to false or omit it in release builds.",
-        ))
+        findings.append(
+            Finding(
+                rule_id="IOS-DBG-004c",
+                title="NSAssertionsEnabled is true in Info.plist",
+                severity=Severity.LOW,
+                description="Assertions are enabled, which may expose internal error messages.",
+                evidence="NSAssertionsEnabled = true",
+                recommendation="Set NSAssertionsEnabled to false or omit it in release builds.",
+            )
+        )
 
     return findings

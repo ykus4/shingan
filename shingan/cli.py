@@ -20,13 +20,18 @@ console = Console(stderr=True)
 store = ScanStore()
 
 SEVERITY_COLOR = {
-    "high":   "red",
+    "high": "red",
     "medium": "yellow",
-    "low":    "green",
-    "info":   "cyan",
+    "low": "green",
+    "info": "cyan",
 }
 
-SEVERITY_ORDER = {Severity.HIGH: 0, Severity.MEDIUM: 1, Severity.LOW: 2, Severity.INFO: 3}
+SEVERITY_ORDER = {
+    Severity.HIGH: 0,
+    Severity.MEDIUM: 1,
+    Severity.LOW: 2,
+    Severity.INFO: 3,
+}
 
 
 @click.group()
@@ -36,12 +41,37 @@ def cli():
 
 @cli.command()
 @click.argument("ipa", type=click.Path(exists=True, dir_okay=False))
-@click.option("--format", "fmt", type=click.Choice(["text", "json", "sarif", "html"]), default="text", show_default=True)
-@click.option("--out", type=click.Path(), default=None, help="Output file path (stdout if omitted)")
-@click.option("--fail-on", "fail_on", type=click.Choice(["high", "medium", "low", "none"]), default="none", show_default=True, help="Exit 1 if any finding at this severity or above")
-@click.option("--save/--no-save", default=True, show_default=True, help="Persist scan result to local store")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "json", "sarif", "html"]),
+    default="text",
+    show_default=True,
+)
+@click.option(
+    "--out",
+    type=click.Path(),
+    default=None,
+    help="Output file path (stdout if omitted)",
+)
+@click.option(
+    "--fail-on",
+    "fail_on",
+    type=click.Choice(["high", "medium", "low", "none"]),
+    default="none",
+    show_default=True,
+    help="Exit 1 if any finding at this severity or above",
+)
+@click.option(
+    "--save/--no-save",
+    default=True,
+    show_default=True,
+    help="Persist scan result to local store",
+)
 @click.option("--baseline", default=None, help="Scan ID to diff against")
-def scan(ipa: str, fmt: str, out: str | None, fail_on: str, save: bool, baseline: str | None):
+def scan(
+    ipa: str, fmt: str, out: str | None, fail_on: str, save: bool, baseline: str | None
+):
     """Scan an IPA file for reverse-engineering vulnerabilities."""
     ipa_path = Path(ipa)
     console.print(f"[cyan]shingan[/cyan] scanning [bold]{ipa_path.name}[/bold] …")
@@ -69,7 +99,9 @@ def scan(ipa: str, fmt: str, out: str | None, fail_on: str, save: bool, baseline
                 f"{len(diff.persisted)} persisted[/dim]"
             )
         except FileNotFoundError:
-            console.print(f"[yellow]Warning:[/yellow] baseline scan {baseline} not found, skipping diff")
+            console.print(
+                f"[yellow]Warning:[/yellow] baseline scan {baseline} not found, skipping diff"
+            )
 
     # Output
     output_text = _render(result, fmt, diff=diff)
@@ -88,7 +120,9 @@ def scan(ipa: str, fmt: str, out: str | None, fail_on: str, save: bool, baseline
     if fail_on != "none":
         threshold = Severity(fail_on)
         threshold_order = SEVERITY_ORDER[threshold]
-        violations = [f for f in result.findings if SEVERITY_ORDER[f.severity] <= threshold_order]
+        violations = [
+            f for f in result.findings if SEVERITY_ORDER[f.severity] <= threshold_order
+        ]
         if violations:
             console.print(
                 f"\n[red]FAIL[/red] — {len(violations)} finding(s) at severity "
@@ -96,7 +130,9 @@ def scan(ipa: str, fmt: str, out: str | None, fail_on: str, save: bool, baseline
             )
             sys.exit(1)
         else:
-            console.print(f"\n[green]PASS[/green] — no findings at severity [bold]{fail_on}[/bold] or above")
+            console.print(
+                f"\n[green]PASS[/green] — no findings at severity [bold]{fail_on}[/bold] or above"
+            )
 
 
 @cli.command("list")
@@ -135,7 +171,7 @@ def list_scans(app_id: str | None):
 def diff(scan_id: str, baseline_id: str):
     """Show diff between two stored scans."""
     try:
-        current  = store.load(scan_id)
+        current = store.load(scan_id)
         baseline = store.load(baseline_id)
     except FileNotFoundError as e:
         console.print(f"[red]Error:[/red] {e}")
@@ -146,19 +182,25 @@ def diff(scan_id: str, baseline_id: str):
     if d.new:
         console.print(f"\n[green bold]NEW ({len(d.new)})[/green bold]")
         for f in d.new:
-            console.print(f"  [{SEVERITY_COLOR[f.severity.value]}]{f.severity.value.upper()}[/{SEVERITY_COLOR[f.severity.value]}]  {f.rule_id}  {f.title}")
+            console.print(
+                f"  [{SEVERITY_COLOR[f.severity.value]}]{f.severity.value.upper()}[/{SEVERITY_COLOR[f.severity.value]}]  {f.rule_id}  {f.title}"
+            )
 
     if d.fixed:
         console.print(f"\n[red bold]FIXED ({len(d.fixed)})[/red bold]")
         for f in d.fixed:
-            console.print(f"  [{SEVERITY_COLOR[f.severity.value]}]{f.severity.value.upper()}[/{SEVERITY_COLOR[f.severity.value]}]  {f.rule_id}  {f.title}")
+            console.print(
+                f"  [{SEVERITY_COLOR[f.severity.value]}]{f.severity.value.upper()}[/{SEVERITY_COLOR[f.severity.value]}]  {f.rule_id}  {f.title}"
+            )
 
     console.print(f"\n[dim]{len(d.persisted)} finding(s) persisted from baseline[/dim]")
 
 
 @cli.command()
 @click.argument("scan_id")
-@click.option("--format", "fmt", type=click.Choice(["json", "sarif", "html"]), default="json")
+@click.option(
+    "--format", "fmt", type=click.Choice(["json", "sarif", "html"]), default="json"
+)
 @click.option("--out", type=click.Path(), required=True)
 def export(scan_id: str, fmt: str, out: str):
     """Export a stored scan result."""
@@ -176,11 +218,13 @@ def export(scan_id: str, fmt: str, out: str):
 def serve():
     """Start the web UI."""
     import uvicorn
+
     console.print("[cyan]shingan[/cyan] web UI → [bold]http://localhost:8000[/bold]")
     uvicorn.run("shingan.api.main:app", host="0.0.0.0", port=8000, reload=False)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def _render(result, fmt: str, diff=None) -> str:
     if fmt == "json":
