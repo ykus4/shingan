@@ -35,9 +35,7 @@ if (_WEB / "static").exists():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     scans = store.list_scans()
-    return templates.TemplateResponse(
-        "index.html", {"request": request, "scans": scans}
-    )
+    return templates.TemplateResponse(request, "index.html", {"scans": scans})
 
 
 @app.get("/scans/{scan_id}", response_class=HTMLResponse)
