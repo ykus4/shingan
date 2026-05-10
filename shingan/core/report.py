@@ -1,0 +1,149 @@
+"""Report generation: JSON, SARIF, HTML."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Literal
+
+from jinja2 import Environment, FileSystemLoader
+
+from shingan.core.models import ScanResult, Severity
+
+_TEMPLATES_DIR = Path(__file__).parent.parent / "web" / "templates"
+_jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescape=True)
+
+# SARIF severity mapping
+_SARIF_LEVEL = {
+    Severity.HIGH: "error",
+    Severity.MEDIUM: "warning",
+    Severity.LOW: "note",
+    Severity.INFO: "none",
+}
+
+
+def to_json(result: ScanResult, indent: int = 2) -> str:
+    return json.dumps(result.to_dict(), ensure_ascii=False, indent=indent)
+
+
+def to_sarif(result: ScanResult) -> str:
+    rules = {}
+    for f in result.findings:
+        if f.rule_id not in rules:
+            rules[f.rule_id] = {
+                "id": f.rule_id,
+                "name": f.rule_id.replace("-", "_"),
+                "shortDescription": {"text": f.title},
+                "fullDescription": {"text": f.description},
+                "help": {"text": f.recommendation},
+                "defaultConfiguration": {
+                    "level": _SARIF_LEVEL.get(f.severity, "warning")
+                },
+            }
+
+    sarif = {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "shingan",
+                        "version": "0.1.0",
+                        "informationUri": "https://github.com/ykus4/shingan",
+                        "rules": list(rules.values()),
+                    }
+                },
+                "results": [
+                    {
+                        "ruleId": f.rule_id,
+                        "level": _SARIF_LEVEL.get(f.severity, "warning"),
+                        "message": {
+                            "text": f"{f.title}\n\n{f.description}\n\nEvidence:\n{f.evidence}\n\nRecommendation:\n{f.recommendation}"
+                        },
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {
+                                        "uri": result.ipa_name,
+                                        "uriBaseId": "%SRCROOT%",
+                                    }
+                                }
+                            }
+                        ],
+                    }
+                    for f in result.findings
+                ],
+            }
+        ],
+    }
+    return json.dumps(sarif, ensure_ascii=False, indent=2)
+
+
+def to_html(
+    result: ScanResult,
+    diff_new: set[str] | None = None,
+    diff_fixed: set[str] | None = None,
+) -> str:
+    summary = result.to_dict()["summary"]
+
+    findings = []
+    for f in result.findings:
+        fp = f.fingerprint()
+        findings.append(
+            {
+                "rule_id": f.rule_id,
+                "severity": f.severity.value,
+                "title": f.title,
+                "description": f.description,
+                "evidence": f.evidence,
+                "recommendation": f.recommendation,
+                "is_new": bool(diff_new and fp in diff_new),
+                "is_fixed": bool(diff_fixed and fp in diff_fixed),
+            }
+        )
+
+    template = _jinja_env.get_template("report.html")
+    return template.render(
+        ipa_name=result.ipa_name,
+        app_id=result.app_id,
+        app_version=result.app_version,
+        build=result.build,
+        scanned_at=result.scanned_at,
+        high=summary["high"],
+        medium=summary["medium"],
+        low=summary["low"],
+        info_count=summary["info"],
+        total=summary["total"],
+        findings=findings,
+    )
+
+
+def write_report(
+    result: ScanResult,
+    output_dir: Path,
+    formats: list[Literal["json", "sarif", "html"]] | None = None,
+    diff_new: set[str] | None = None,
+    diff_fixed: set[str] | None = None,
+) -> dict[str, Path]:
+    if formats is None:
+        formats = ["json", "html"]
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written = {}
+    stem = result.scan_id[:8]
+    if "json" in formats:
+        p = output_dir / f"{stem}.json"
+        p.write_text(to_json(result), encoding="utf-8")
+        written["json"] = p
+    if "sarif" in formats:
+        p = output_dir / f"{stem}.sarif"
+        p.write_text(to_sarif(result), encoding="utf-8")
+        written["sarif"] = p
+    if "html" in formats:
+        p = output_dir / f"{stem}.html"
+        p.write_text(
+            to_html(result, diff_new=diff_new, diff_fixed=diff_fixed), encoding="utf-8"
+        )
+        written["html"] = p
+    return written
