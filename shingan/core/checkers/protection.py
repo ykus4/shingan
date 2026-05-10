@@ -145,6 +145,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Implement multiple independent checks at runtime."
                 ),
                 extra={"indicator_count": len(jb_hits)},
+                masvs="MASVS-RESILIENCE-1",
             )
         )
     else:
@@ -162,6 +163,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Add jailbreak detection if the app handles sensitive data or transactions. "
                     "Refer to OWASP MASTG MASVS-RESILIENCE for guidance."
                 ),
+                masvs="MASVS-RESILIENCE-1",
             )
         )
 
@@ -180,6 +182,7 @@ def check(binary_path: Path) -> list[Finding]:
                 evidence="\n".join(frida_hits[:10]),
                 recommendation="Verify effectiveness with dynamic testing.",
                 extra={"indicator_count": len(frida_hits)},
+                masvs="MASVS-RESILIENCE-4",
             )
         )
     else:
@@ -197,6 +200,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Add Frida detection (e.g. port scan for frida-server, check for frida-gadget "
                     "in loaded libraries). Libraries like IOSSecuritySuite can help."
                 ),
+                masvs="MASVS-RESILIENCE-4",
             )
         )
 
@@ -213,6 +217,7 @@ def check(binary_path: Path) -> list[Finding]:
                 ),
                 evidence="\n".join(lldb_hits[:10]),
                 recommendation="Verify that PT_DENY_ATTACH is called early in app launch.",
+                masvs="MASVS-RESILIENCE-4",
             )
         )
     else:
@@ -229,6 +234,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Call ptrace(PT_DENY_ATTACH, 0, 0, 0) early in main() or application:didFinishLaunching. "
                     "Note: this is a deterrent, not a complete protection."
                 ),
+                masvs="MASVS-RESILIENCE-4",
             )
         )
 
@@ -250,6 +256,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "the pinning cannot be trivially bypassed."
                 ),
                 extra={"indicator_count": len(ssl_hits)},
+                masvs="MASVS-NETWORK-2",
             )
         )
     else:
@@ -267,6 +274,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Implement SSL/TLS certificate or public key pinning. "
                     "Consider TrustKit or NSPinnedDomains (iOS 14+) for implementation."
                 ),
+                masvs="MASVS-NETWORK-2",
             )
         )
 

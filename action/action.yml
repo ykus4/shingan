@@ -1,0 +1,62 @@
+name: shingan IPA Scan
+description: Scan an iOS IPA for reverse-engineering vulnerabilities and upload SARIF to GitHub Code Scanning.
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  ipa_path:
+    description: Path to the .ipa file to scan
+    required: true
+  fail_on:
+    description: Fail the step if findings at this severity or above are found (high/medium/low/none)
+    required: false
+    default: high
+  upload_sarif:
+    description: Upload SARIF results to GitHub Code Scanning
+    required: false
+    default: "true"
+  sarif_output:
+    description: Path to write the SARIF output file
+    required: false
+    default: shingan.sarif
+
+outputs:
+  scan_id:
+    description: The shingan scan ID for this run
+  high_count:
+    description: Number of high severity findings
+  medium_count:
+    description: Number of medium severity findings
+
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+
+    - name: Install shingan
+      shell: bash
+      run: uv tool install shingan
+
+    - name: Run shingan scan
+      id: scan
+      shell: bash
+      run: |
+        shingan scan "${{ inputs.ipa_path }}" \
+          --format sarif \
+          --out "${{ inputs.sarif_output }}" \
+          --fail-on "${{ inputs.fail_on }}" \
+          --no-save
+        SCAN_JSON=$(shingan scan "${{ inputs.ipa_path }}" --format json --no-save 2>/dev/null || echo '{}')
+        echo "high_count=$(echo $SCAN_JSON | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("summary",{}).get("high",0))')" >> $GITHUB_OUTPUT
+        echo "medium_count=$(echo $SCAN_JSON | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("summary",{}).get("medium",0))')" >> $GITHUB_OUTPUT
+
+    - name: Upload SARIF
+      if: ${{ inputs.upload_sarif == 'true' && always() }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif_output }}

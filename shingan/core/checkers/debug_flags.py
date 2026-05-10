@@ -101,6 +101,7 @@ def check(binary_path: Path, info_plist: dict) -> list[Finding]:
                         f"Remove '{key}' from your release build entitlements. "
                         "This is typically set only in debug/development provisioning profiles."
                     ),
+                    masvs="MASVS-RESILIENCE-2",
                 )
             )
 
@@ -122,6 +123,7 @@ def check(binary_path: Path, info_plist: dict) -> list[Finding]:
                     "Use os_log with appropriate privacy levels for production logging."
                 ),
                 extra={"total_debug_strings": len(debug_strings)},
+                masvs="MASVS-RESILIENCE-2",
             )
         )
 
@@ -135,6 +137,7 @@ def check(binary_path: Path, info_plist: dict) -> list[Finding]:
                 description="Assertions are enabled, which may expose internal error messages.",
                 evidence="NSAssertionsEnabled = true",
                 recommendation="Set NSAssertionsEnabled to false or omit it in release builds.",
+                masvs="MASVS-RESILIENCE-2",
             )
         )
 

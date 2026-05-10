@@ -1,0 +1,43 @@
+# Example custom rules for shingan.
+# Copy to ~/.shingan/rules/ and shingan will pick them up automatically.
+
+- id: CUSTOM-001
+  title: "Internal domain hardcoded"
+  severity: medium
+  description: "An internal domain name was found in the binary. This may expose internal infrastructure."
+  recommendation: "Move internal endpoints to a configuration file or remote config."
+  masvs: MASVS-STORAGE-2
+  match:
+    type: regex
+    target: binary
+    patterns:
+      - "internal\\.mycompany\\.com"
+      - "staging\\.mycompany\\.com"
+    any: true
+
+- id: CUSTOM-002
+  title: "Analytics opt-out not implemented"
+  severity: low
+  description: "No analytics opt-out string found. Verify user consent for data collection."
+  recommendation: "Implement analytics opt-out and ensure it is respected."
+  match:
+    type: string
+    target: binary
+    patterns:
+      - "optOut"
+      - "analyticsEnabled"
+      - "trackingEnabled"
+    any: true
+
+- id: CUSTOM-003
+  title: "Debug endpoint enabled via Info.plist"
+  severity: high
+  description: "A custom debug flag is set to true in Info.plist."
+  recommendation: "Remove debug flags from release builds."
+  match:
+    type: plist_key
+    target: info_plist
+    patterns:
+      - "DEBUG_ENABLED"
+      - "USE_STAGING"
+    any: true

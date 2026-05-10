@@ -6,7 +6,7 @@
 
 ## v0.1 — MVP (static analysis) ✅
 
-### Checks (Must-have)
+### Checks
 | Rule ID | What it detects | Status |
 |---|---|---|
 | IOS-SYM-001 | Debug symbols, ObjC class metadata, Swift mangled symbols | ✅ |
@@ -28,47 +28,65 @@
 
 ---
 
-## v0.2 — Accuracy improvements
+## v0.2 — Accuracy improvements ✅
 
 ### New checks
-- [ ] **IOS-RASP-006**: PIE enabled (`otool -hv`)
-- [ ] **IOS-RASP-007**: Stack canary enabled
-- [ ] **IOS-RASP-008**: ARC (Automatic Reference Counting) enabled
-- [ ] **IOS-SEC-009**: Keychain access level (`kSecAttrAccessible*` usage)
-- [ ] **IOS-SEC-010**: Weak crypto detection (MD5, SHA1, ECB mode, etc.)
-- [ ] **IOS-DEP-011**: Third-party SDK vulnerability fingerprinting (SBOM)
-- [ ] **IOS-META-012**: Over-privileged background modes / permissions
+| Rule ID | What it detects | Status |
+|---|---|---|
+| IOS-RASP-006 | PIE (Position Independent Executable) | ✅ |
+| IOS-RASP-007 | Stack canary | ✅ |
+| IOS-RASP-008 | ARC (Automatic Reference Counting) | ✅ |
+| IOS-SEC-009 | Weak Keychain access levels (`kSecAttrAccessible*`) | ✅ |
+| IOS-SEC-010 | Weak crypto: MD5, SHA-1, DES/3DES, RC4, ECB mode | ✅ |
+| IOS-DEP-011 | Third-party SDK fingerprinting (SBOM) | ✅ |
+| IOS-META-012 | Over-privileged background modes / permissions | ✅ |
 
 ### Detection quality
-- [ ] Secret validation layer (verify AWS key format, etc.)
-- [ ] Two-stage confidence scoring (`pattern_score × validation_score`)
-- [ ] False positive suppression (allowlist / per-finding suppress)
-- [ ] Direct `.app` bundle and `xcarchive` input support
+- [x] Secret validation layer (regex + entropy confidence scoring)
+- [x] False positive suppression (allowlist / per-finding suppress)
+- [x] Direct `.app` bundle and `.xcarchive` input support
 
 ---
 
-## v0.3 — UX and integrations
+## v0.3 — UX and integrations ✅
 
 ### Web UI
-- [ ] Diff comparison UI — select two scans, highlight delta
-- [ ] Per-finding suppress action
-- [ ] PDF export
-- [ ] Light mode theme
+- [x] Diff comparison UI — NEW / FIXED badges per finding
+- [x] Per-finding suppress action (via API)
 
 ### CI/CD
-- [ ] Official GitHub Actions action (`shingan/action@v1`)
-- [ ] GitLab CI example
-- [ ] Fastlane plugin
-- [ ] JIRA / Slack webhook notifications
+- [x] Official GitHub Actions composite action (`action/action.yml`)
+- [x] Fastlane plugin (`fastlane-plugin-shingan`)
 
 ### API
-- [ ] `POST /api/suppressions`
-- [ ] `POST /api/baselines/{app_id}`
-- [ ] Full OpenAPI docs
+- [x] `POST /api/suppressions`
+- [x] `POST /api/baselines/{app_id}`
 
 ---
 
-## v0.4 — Dynamic analysis (TODO)
+## v1.0 — Production-ready ✅
+
+- [x] SQLite storage (`~/.shingan/shingan.db`) with auto JSON migration
+- [x] Custom YAML rule engine (`~/.shingan/rules/*.yaml`)
+- [x] Full MASVS / MASTG checklist mapping on all findings
+- [x] EN / JA report localization (`--lang en|ja`)
+- [x] SARIF 2.1.0 export for GitHub Code Scanning
+- [x] 32-test suite covering all checkers, suppression, diff, report generation
+
+---
+
+## v1.1 — Polish
+
+- [ ] PDF export from HTML report
+- [ ] Light mode theme option
+- [ ] GitLab CI example workflow
+- [ ] JIRA / Slack webhook notifications on new HIGH findings
+- [ ] `shingan suppress` CLI subcommand (wraps REST API)
+- [ ] OpenAPI docs auto-generated at `/docs`
+
+---
+
+## v0.4 / v1.2 — Dynamic analysis (TODO)
 
 > Static signals can only tell you whether a protection *indicator exists*.
 > Confirming that a protection *actually works* requires dynamic testing.
@@ -81,14 +99,12 @@
 
 ---
 
-## v1.0 — Production-ready
+## Future
 
 - [ ] Multi-user support (auth / team workspaces)
-- [ ] SQLite / PostgreSQL storage backend
-- [ ] Custom YAML rule engine (user-defined checks)
-- [ ] Full MASVS / MASTG checklist mapping
-- [ ] Localization (English / Japanese reports)
+- [ ] PostgreSQL storage backend option
 - [ ] Docker image / Homebrew formula
+- [ ] VS Code extension
 
 ---
 

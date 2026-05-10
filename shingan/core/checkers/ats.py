@@ -29,6 +29,7 @@ def check(info_plist: dict) -> list[Finding]:
                     "If a specific host requires HTTP, use NSExceptionDomains with the "
                     "narrowest possible exception."
                 ),
+                masvs="MASVS-NETWORK-1",
             )
         )
 
@@ -42,6 +43,7 @@ def check(info_plist: dict) -> list[Finding]:
                 description="Media content can be loaded over plain HTTP.",
                 evidence="NSAppTransportSecurity.NSAllowsArbitraryLoadsForMedia = true",
                 recommendation="Ensure media assets are served over HTTPS.",
+                masvs="MASVS-NETWORK-1",
             )
         )
 
@@ -54,6 +56,7 @@ def check(info_plist: dict) -> list[Finding]:
                 description="WKWebView and SFSafariViewController can load plain HTTP content.",
                 evidence="NSAppTransportSecurity.NSAllowsArbitraryLoadsInWebContent = true",
                 recommendation="Remove this exception and serve all web content over HTTPS.",
+                masvs="MASVS-NETWORK-1",
             )
         )
 
@@ -67,6 +70,7 @@ def check(info_plist: dict) -> list[Finding]:
                 description="Plain HTTP connections to .local domains and link-local addresses are allowed.",
                 evidence="NSAppTransportSecurity.NSAllowsLocalNetworking = true",
                 recommendation="Acceptable for local device discovery, but verify this is intentional.",
+                masvs="MASVS-NETWORK-1",
             )
         )
 
@@ -82,6 +86,7 @@ def check(info_plist: dict) -> list[Finding]:
                     description=f"NSExceptionAllowsInsecureHTTPLoads is set for '{domain}'.",
                     evidence=f"NSExceptionDomains.{domain}.NSExceptionAllowsInsecureHTTPLoads = true",
                     recommendation=f"Migrate '{domain}' to HTTPS and remove this exception.",
+                    masvs="MASVS-NETWORK-1",
                 )
             )
         if config.get("NSExceptionMinimumTLSVersion") in ("TLSv1.0", "TLSv1.1"):
@@ -94,6 +99,7 @@ def check(info_plist: dict) -> list[Finding]:
                     description=f"Minimum TLS version is set to {ver} for '{domain}'.",
                     evidence=f"NSExceptionDomains.{domain}.NSExceptionMinimumTLSVersion = {ver}",
                     recommendation=f"Require TLSv1.2 or higher for '{domain}'.",
+                    masvs="MASVS-NETWORK-1",
                 )
             )
 
@@ -110,6 +116,7 @@ def check(info_plist: dict) -> list[Finding]:
                 ),
                 evidence="UIFileSharingEnabled = true",
                 recommendation="Disable unless your app explicitly requires file sharing.",
+                masvs="MASVS-NETWORK-1",
             )
         )
 
@@ -127,6 +134,7 @@ def check(info_plist: dict) -> list[Finding]:
                 ),
                 evidence=", ".join(schemes[:15]),
                 recommendation="Remove schemes that are not actively used by the app.",
+                masvs="MASVS-NETWORK-1",
             )
         )
 

@@ -51,6 +51,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Build with DEBUG_INFORMATION_FORMAT=dwarf-with-dsym and strip the binary. "
                     "Use STRIP_INSTALLED_PRODUCT=YES in release builds."
                 ),
+                masvs="MASVS-RESILIENCE-3",
             )
         )
 
@@ -84,6 +85,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "an obfuscation tool (e.g. iXGuard, Guardsquare) to rename symbols in release builds."
                 ),
                 extra={"total_classes": len(objc_classes)},
+                masvs="MASVS-RESILIENCE-3",
             )
         )
 
@@ -110,6 +112,7 @@ def check(binary_path: Path) -> list[Finding]:
                     "Apply obfuscation for high-security apps."
                 ),
                 extra={"total_swift_syms": len(swift_syms)},
+                masvs="MASVS-RESILIENCE-3",
             )
         )
 
