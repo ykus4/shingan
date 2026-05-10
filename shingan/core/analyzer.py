@@ -6,7 +6,7 @@ import datetime
 import uuid
 from pathlib import Path
 
-from shingan.core.ingest import IPABundle, ingest
+from shingan.core.ingest import ingest
 from shingan.core.models import ScanResult
 from shingan.core.checkers import ats, debug_flags, protection, secrets, symbols
 

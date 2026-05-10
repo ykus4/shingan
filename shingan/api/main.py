@@ -12,13 +12,13 @@ from fastapi.templating import Jinja2Templates
 
 from shingan.core.analyzer import analyze
 from shingan.core.diff import compare
-from shingan.core.report import to_html, to_json, to_sarif
+from shingan.core.report import to_html, to_sarif
 from shingan.core.storage import ScanStore
 
 app = FastAPI(title="shingan", version="0.1.0")
 
 _HERE = Path(__file__).parent
-_WEB  = _HERE.parent / "web"
+_WEB = _HERE.parent / "web"
 templates = Jinja2Templates(directory=str(_WEB / "templates"))
 store = ScanStore()
 
@@ -28,10 +28,13 @@ if (_WEB / "static").exists():
 
 # ── UI routes ─────────────────────────────────────────────────────────────────
 
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     scans = store.list_scans()
-    return templates.TemplateResponse("index.html", {"request": request, "scans": scans})
+    return templates.TemplateResponse(
+        "index.html", {"request": request, "scans": scans}
+    )
 
 
 @app.get("/scans/{scan_id}", response_class=HTMLResponse)
@@ -47,7 +50,7 @@ async def scan_detail(request: Request, scan_id: str, baseline_id: str | None = 
         try:
             baseline = store.load(baseline_id)
             diff = compare(baseline, result)
-            diff_new   = diff.new_fingerprints
+            diff_new = diff.new_fingerprints
             diff_fixed = diff.fixed_fingerprints
         except FileNotFoundError:
             pass
@@ -57,6 +60,7 @@ async def scan_detail(request: Request, scan_id: str, baseline_id: str | None = 
 
 
 # ── API routes ────────────────────────────────────────────────────────────────
+
 
 @app.post("/api/scans")
 async def upload_and_scan(file: UploadFile = File(...)):
@@ -112,18 +116,21 @@ async def get_html(scan_id: str, baseline_id: str | None = None):
         try:
             baseline = store.load(baseline_id)
             diff = compare(baseline, result)
-            diff_new   = diff.new_fingerprints
+            diff_new = diff.new_fingerprints
             diff_fixed = diff.fixed_fingerprints
         except FileNotFoundError:
             pass
 
-    return Response(content=to_html(result, diff_new=diff_new, diff_fixed=diff_fixed), media_type="text/html")
+    return Response(
+        content=to_html(result, diff_new=diff_new, diff_fixed=diff_fixed),
+        media_type="text/html",
+    )
 
 
 @app.get("/api/scans/{scan_id}/diff/{baseline_id}")
 async def diff_scans(scan_id: str, baseline_id: str):
     try:
-        current  = store.load(scan_id)
+        current = store.load(scan_id)
         baseline = store.load(baseline_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -133,8 +140,8 @@ async def diff_scans(scan_id: str, baseline_id: str):
         "scan_id": scan_id,
         "baseline_id": baseline_id,
         "summary": diff.summary(),
-        "new":       [f.to_dict() for f in diff.new],
-        "fixed":     [f.to_dict() for f in diff.fixed],
+        "new": [f.to_dict() for f in diff.new],
+        "fixed": [f.to_dict() for f in diff.fixed],
         "persisted": [f.to_dict() for f in diff.persisted],
     }
 

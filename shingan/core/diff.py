@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shingan.core.models import Finding, ScanResult, Status
+from shingan.core.models import Finding, ScanResult
 
 
 @dataclass
 class DiffResult:
-    new: list[Finding]        # appeared in current, not in baseline
-    fixed: list[Finding]      # were in baseline, gone in current
+    new: list[Finding]  # appeared in current, not in baseline
+    fixed: list[Finding]  # were in baseline, gone in current
     persisted: list[Finding]  # in both baseline and current
 
     @property
@@ -32,10 +32,10 @@ class DiffResult:
 def compare(baseline: ScanResult, current: ScanResult) -> DiffResult:
     """Compare current scan against a baseline scan."""
     baseline_fps = {f.fingerprint(): f for f in baseline.findings}
-    current_fps  = {f.fingerprint(): f for f in current.findings}
+    current_fps = {f.fingerprint(): f for f in current.findings}
 
-    new_fps       = set(current_fps) - set(baseline_fps)
-    fixed_fps     = set(baseline_fps) - set(current_fps)
+    new_fps = set(current_fps) - set(baseline_fps)
+    fixed_fps = set(baseline_fps) - set(current_fps)
     persisted_fps = set(current_fps) & set(baseline_fps)
 
     return DiffResult(
