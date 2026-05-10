@@ -1,0 +1,53 @@
+name: IPA Security Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipa_artifact:
+        description: "Name of the IPA artifact to scan"
+        required: true
+        default: "MyApp.ipa"
+      fail_on:
+        description: "Fail build on severity level (high/medium/low/none)"
+        required: false
+        default: "high"
+
+jobs:
+  scan:
+    name: Scan IPA
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install shingan
+        run: uv sync
+
+      - name: Download IPA artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.ipa_artifact }}
+          path: build/
+
+      - name: Scan IPA
+        run: |
+          uv run shingan scan build/${{ github.event.inputs.ipa_artifact }} \
+            --format sarif \
+            --out shingan.sarif \
+            --fail-on ${{ github.event.inputs.fail_on }}
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: shingan.sarif
+
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shingan-report
+          path: shingan.sarif

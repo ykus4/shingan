@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shingan — {{ ipa_name }}</title>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3e;
+    --text: #e2e8f0; --muted: #718096;
+    --high: #fc8181; --medium: #f6ad55; --low: #68d391; --info: #76e4f7;
+    --high-bg: #2d1515; --medium-bg: #2d1f0a; --low-bg: #0f2d1a; --info-bg: #0a1f2d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; line-height: 1.6; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 20px 32px; }
+  header h1 { font-size: 20px; font-weight: 600; letter-spacing: 0.05em; }
+  header h1 span { color: var(--info); }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 32px; }
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+  .summary-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; text-align: center; }
+  .summary-card .count { font-size: 32px; font-weight: 700; }
+  .summary-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-top: 4px; }
+  .high .count { color: var(--high); } .medium .count { color: var(--medium); }
+  .low .count { color: var(--low); } .info .count { color: var(--info); }
+  .section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .finding { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+  .finding-header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; cursor: pointer; }
+  .finding-header:hover { background: rgba(255,255,255,0.03); }
+  .badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 4px; }
+  .badge-high { background: var(--high-bg); color: var(--high); border: 1px solid var(--high); }
+  .badge-medium { background: var(--medium-bg); color: var(--medium); border: 1px solid var(--medium); }
+  .badge-low { background: var(--low-bg); color: var(--low); border: 1px solid var(--low); }
+  .badge-info { background: var(--info-bg); color: var(--info); border: 1px solid var(--info); }
+  .rule-id { color: var(--muted); font-size: 11px; }
+  .finding-title { flex: 1; font-size: 14px; }
+  .finding-body { padding: 0 18px 14px; border-top: 1px solid var(--border); display: none; }
+  .finding-body.open { display: block; }
+  .finding-body p { margin-top: 10px; color: var(--muted); font-family: -apple-system, sans-serif; font-size: 13px; }
+  .evidence { background: #0d1117; border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-top: 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all; color: #a0aec0; max-height: 200px; overflow-y: auto; }
+  .rec { background: rgba(118, 228, 247, 0.05); border-left: 3px solid var(--info); padding: 10px 14px; margin-top: 10px; border-radius: 0 4px 4px 0; font-family: -apple-system, sans-serif; font-size: 13px; }
+  .diff-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
+  .diff-new { background: #1a2d1a; color: #68d391; border: 1px solid #68d391; }
+  .diff-fixed { background: #2d1515; color: #fc8181; border: 1px solid #fc8181; text-decoration: line-through; opacity: 0.6; }
+  footer { text-align: center; padding: 32px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header>
+  <h1>shin<span>gan</span></h1>
+  <div class="meta">{{ ipa_name }} &nbsp;·&nbsp; {{ app_id }} {{ app_version }} ({{ build }}) &nbsp;·&nbsp; {{ scanned_at }}</div>
+</header>
+<div class="container">
+  <div class="summary">
+    <div class="summary-card high"><div class="count">{{ high }}</div><div class="label">High</div></div>
+    <div class="summary-card medium"><div class="count">{{ medium }}</div><div class="label">Medium</div></div>
+    <div class="summary-card low"><div class="count">{{ low }}</div><div class="label">Low</div></div>
+    <div class="summary-card info"><div class="count">{{ info_count }}</div><div class="label">Info</div></div>
+  </div>
+  <div class="section-title">Findings ({{ total }})</div>
+  {% for f in findings %}
+  <div class="finding">
+    <div class="finding-header">
+      <span class="badge badge-{{ f.severity }}">{{ f.severity | upper }}</span>
+      <span class="rule-id">{{ f.rule_id }}</span>
+      <span class="finding-title">{{ f.title }}</span>
+      {% if f.is_new %}<span class="diff-badge diff-new">NEW</span>{% endif %}
+      {% if f.is_fixed %}<span class="diff-badge diff-fixed">FIXED</span>{% endif %}
+    </div>
+    <div class="finding-body">
+      <p>{{ f.description }}</p>
+      <div class="evidence">{{ f.evidence }}</div>
+      <div class="rec">Recommendation: {{ f.recommendation }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+<footer>Generated by shingan v0.1.0</footer>
+<script>
+  document.querySelectorAll('.finding-header').forEach(h => {
+    h.addEventListener('click', () => {
+      h.nextElementSibling.classList.toggle('open');
+    });
+  });
+</script>
+</body>
+</html>
