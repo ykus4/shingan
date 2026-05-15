@@ -30,7 +30,7 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
-from shingan.core.binary import CheckContext
+from shingan.core.binary import AndroidCheckContext, CheckContext
 from shingan.core.models import Finding, Severity
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ def _match_plist_key(
 
 
 def apply_custom_rules(
-    ctx: CheckContext,
+    ctx: CheckContext | AndroidCheckContext,
     rules_dir: Path = DEFAULT_RULES_DIR,
 ) -> list[Finding]:
     rules = _load_yaml_rules(rules_dir)
@@ -148,7 +148,11 @@ def apply_custom_rules(
             elif match_type == "regex":
                 hits = _match_regex(patterns, ctx.strings, any_match)
         elif target == "info_plist":
-            hits = _match_plist_key(patterns, ctx.info_plist, any_match)
+            plist = getattr(ctx, "info_plist", {})
+            hits = _match_plist_key(patterns, plist, any_match)
+        elif target == "android_manifest":
+            manifest = _get_android_manifest_dict(ctx)
+            hits = _match_plist_key(patterns, manifest, any_match)
 
         if hits:
             findings.append(
@@ -165,3 +169,27 @@ def apply_custom_rules(
             )
 
     return findings
+
+
+def _get_android_manifest_dict(ctx) -> dict:
+    """Extract a flat key=value dict from an AndroidCheckContext's manifest for rule matching."""
+    apk = getattr(ctx, "apk", None)
+    if apk is None:
+        return {}
+    result: dict = {}
+    try:
+        result["package"] = apk.get_package() or ""
+        result["versionName"] = apk.get_androidversion_name() or ""
+        result["versionCode"] = str(apk.get_androidversion_code() or "")
+        result["minSdkVersion"] = str(apk.get_min_sdk_version() or "")
+        result["targetSdkVersion"] = str(apk.get_target_sdk_version() or "")
+        result["debuggable"] = str(
+            apk.get_attribute_value("application", "debuggable") or "false"
+        )
+        result["allowBackup"] = str(
+            apk.get_attribute_value("application", "allowBackup") or "false"
+        )
+        result["permissions"] = " ".join(apk.get_permissions())
+    except Exception:
+        pass
+    return result
