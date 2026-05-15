@@ -60,6 +60,22 @@ def test_runner_unavailable_rule_ids():
     assert rule_ids == {"IOS-DYN-001", "IOS-DYN-002", "IOS-DYN-003"}
 
 
+def test_runner_android_unavailable_without_frida():
+    """Android platform returns AND-DYN-001/002 when frida is missing."""
+    with patch.dict(sys.modules, {"frida": None}):
+        import importlib
+        import shingan.core.dynamic.runner as runner_mod
+
+        importlib.reload(runner_mod)
+        findings = runner_mod.run_dynamic_checks("com.example.app", platform="android")
+
+    assert len(findings) == 2
+    rule_ids = {f.rule_id for f in findings}
+    assert rule_ids == {"AND-DYN-001", "AND-DYN-002"}
+    assert all(f.extra.get("outcome") == "unavailable" for f in findings)
+    assert all(f.severity == Severity.INFO for f in findings)
+
+
 # ── ScanResult summary breakdown ──────────────────────────────────────────────
 
 
