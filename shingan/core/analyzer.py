@@ -12,6 +12,7 @@ from shingan.core.checkers import (
     ats,
     binary_protection,
     crypto,
+    data_handling,
     debug_flags,
     keychain,
     metadata,
@@ -19,10 +20,12 @@ from shingan.core.checkers import (
     sbom,
     secrets,
     symbols,
+    webview,
 )
 from shingan.core.checkers.android import (
     binary_protection as android_binary_protection,
     crypto as android_crypto,
+    data_handling as android_data_handling,
     debug_flags as android_debug_flags,
     manifest as android_manifest,
     network_security as android_network_security,
@@ -31,6 +34,7 @@ from shingan.core.checkers.android import (
     sbom as android_sbom,
     secrets as android_secrets,
     signing as android_signing,
+    webview as android_webview,
 )
 from shingan.core.ingest import APKBundle, ingest
 from shingan.core.models import ScanResult
@@ -91,6 +95,8 @@ def _analyze_ios(
         crypto.check,
         keychain.check,
         sbom.check,
+        webview.check,
+        data_handling.check,
     ]
     for checker in binary_checkers:
         try:
@@ -162,6 +168,8 @@ def _analyze_android(
         android_permissions.check,
         android_sbom.check,
         android_signing.check,
+        android_webview.check,
+        android_data_handling.check,
     ]
     for checker in checkers:
         try:
