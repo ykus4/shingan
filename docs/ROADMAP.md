@@ -75,14 +75,14 @@
 
 ---
 
-## v1.1 — Polish
+## v1.1 — Polish ✅
 
-- [ ] PDF export from HTML report
-- [ ] Light mode theme option
-- [ ] GitLab CI example workflow
-- [ ] JIRA / Slack webhook notifications on new HIGH findings
-- [ ] `shingan suppress` CLI subcommand (wraps REST API)
-- [ ] OpenAPI docs auto-generated at `/docs`
+- [x] PDF export from HTML report
+- [x] Light mode theme option
+- [x] GitLab CI example workflow
+- [x] JIRA / Slack webhook notifications on new HIGH findings
+- [x] `shingan suppress` CLI subcommand (wraps REST API)
+- [x] OpenAPI docs auto-generated at `/docs`
 
 ---
 
