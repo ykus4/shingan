@@ -163,14 +163,16 @@ def test_scan_result_summary():
         ]
     )
     s = r.to_dict()["summary"]
-    assert s == {
-        "high": 1,
-        "medium": 1,
-        "low": 1,
-        "info": 1,
-        "total": 4,
-        "suppressed": 0,
-    }
+    # Top-level counts (backward compatible)
+    assert s["high"] == 1
+    assert s["medium"] == 1
+    assert s["low"] == 1
+    assert s["info"] == 1
+    assert s["total"] == 4
+    assert s["suppressed"] == 0
+    # All findings are static (no dynamic source tag)
+    assert s["static"]["total"] == 4
+    assert s["dynamic"]["total"] == 0
 
 
 def test_finding_roundtrip():
