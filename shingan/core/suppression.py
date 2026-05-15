@@ -10,12 +10,18 @@ Omitting evidence_prefix suppresses all findings for that rule_id.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from shingan.core.models import Finding
 
-DEFAULT_PATH = Path.home() / ".shingan" / "suppressions.json"
+_SHINGAN_HOME = (
+    Path(os.environ["SHINGAN_HOME"])
+    if "SHINGAN_HOME" in os.environ
+    else Path.home() / ".shingan"
+)
+DEFAULT_PATH = _SHINGAN_HOME / "suppressions.json"
 
 
 @dataclass

@@ -21,6 +21,7 @@ Rule schema:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,12 @@ from shingan.core.models import Finding, Severity
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RULES_DIR = Path.home() / ".shingan" / "rules"
+_SHINGAN_HOME = (
+    Path(os.environ["SHINGAN_HOME"])
+    if "SHINGAN_HOME" in os.environ
+    else Path.home() / ".shingan"
+)
+DEFAULT_RULES_DIR = _SHINGAN_HOME / "rules"
 
 
 def _load_yaml_rules(rules_dir: Path) -> list[dict]:
