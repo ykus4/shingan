@@ -1,4 +1,4 @@
-"""IOS-META-012: Over-privileged background modes and permissions."""
+"""IOS-META-012 / IOS-URL-018: Over-privileged background modes, permissions, and URL scheme exposure."""
 
 from __future__ import annotations
 
@@ -122,6 +122,56 @@ def check(info_plist: dict) -> list[Finding]:
                     "to document intent and make future changes deliberate."
                 ),
                 masvs="MASVS-PLATFORM-1",
+            )
+        )
+
+    # --- 4. URL scheme exposure (MASVS-PLATFORM-3) ---
+    url_types = info_plist.get("CFBundleURLTypes", [])
+    custom_schemes: list[str] = []
+    for url_type in url_types:
+        schemes = url_type.get("CFBundleURLSchemes", [])
+        custom_schemes.extend(str(s) for s in schemes)
+
+    if custom_schemes:
+        findings.append(
+            Finding(
+                rule_id="IOS-URL-018a",
+                title=f"Custom URL scheme(s) registered: {', '.join(custom_schemes[:5])}",
+                severity=Severity.LOW,
+                description=(
+                    f"The app registers {len(custom_schemes)} custom URL scheme(s). "
+                    "Custom URL schemes are not exclusive on iOS — any app can register the "
+                    "same scheme and intercept deep links, potentially hijacking OAuth tokens "
+                    "or other sensitive parameters passed via URL."
+                ),
+                evidence="\n".join(custom_schemes),
+                recommendation=(
+                    "Prefer Universal Links (HTTPS-based) over custom URL schemes for sensitive flows. "
+                    "Never pass sensitive tokens or credentials as URL parameters in custom schemes."
+                ),
+                masvs="MASVS-PLATFORM-3",
+            )
+        )
+
+    # --- 5. Universal Links configured ---
+    associated_domains = info_plist.get("com.apple.developer.associated-domains", [])
+    if not associated_domains and not custom_schemes:
+        findings.append(
+            Finding(
+                rule_id="IOS-URL-018b",
+                title="No Universal Links (Associated Domains) configured",
+                severity=Severity.INFO,
+                description=(
+                    "The app does not configure Associated Domains for Universal Links. "
+                    "If the app handles deep links, Universal Links are recommended over "
+                    "custom URL schemes as they are cryptographically bound to the domain."
+                ),
+                evidence="com.apple.developer.associated-domains not found in Info.plist",
+                recommendation=(
+                    "Use Universal Links for deep linking into your app. "
+                    "Configure an apple-app-site-association file on your server."
+                ),
+                masvs="MASVS-PLATFORM-3",
             )
         )
 

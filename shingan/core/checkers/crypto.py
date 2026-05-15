@@ -1,9 +1,13 @@
-"""IOS-SEC-010: Weak cryptography detection.
+"""IOS-SEC-010 / IOS-SEC-016: Weak cryptography and key management issues.
 
-Looks for usage of deprecated/weak algorithms: MD5, SHA1, DES, 3DES, RC4, ECB mode.
+Looks for:
+  - Deprecated/weak algorithms: MD5, SHA1, DES, 3DES, RC4, ECB mode (MASVS-CRYPTO-1)
+  - Hardcoded IV, salt, or encryption key candidates (MASVS-CRYPTO-2)
 """
 
 from __future__ import annotations
+
+import re
 
 from shingan.core.binary import CheckContext
 from shingan.core.models import Finding, Severity
@@ -44,11 +48,28 @@ WEAK_CRYPTO: list[tuple[str, str, list[str], str]] = [
         ["kCCOptionECBMode", "CCOptionECBMode"],
         "ECB mode leaks patterns in ciphertext. Use CBC or GCM mode.",
     ),
+]
+
+# Patterns indicating hardcoded IV / salt / key material (MASVS-CRYPTO-2)
+_HARDCODED_KEY_PATTERNS: list[tuple[str, re.Pattern]] = [
+    # e.g. let iv: [UInt8] = [0x00, 0x01, 0x02, ...]
     (
-        "IOS-SEC-010f",
-        "Hardcoded IV / static initialization vector",
-        ["kCCOptionECBMode"],  # static IV often co-occurs with ECB; expand as needed
-        "A static IV defeats the purpose of encryption.",
+        "hardcoded byte array (IV/key candidate)",
+        re.compile(
+            r"(?:iv|IV|salt|SALT|key|KEY|nonce|NONCE)\s*[=:]\s*[\[\{]\s*0x[0-9a-fA-F]{2}"
+        ),
+    ),
+    # e.g. kCCKeySize / CCCrypt with literal key string
+    (
+        "CCCrypt with literal key",
+        re.compile(r"CCCrypt\s*\([^)]*[\"'][A-Za-z0-9+/=]{8,}[\"']"),
+    ),
+    # Static 16/24/32-char ASCII string assigned to variable named key/iv/salt
+    (
+        "hardcoded ASCII key/IV string",
+        re.compile(
+            r'(?:iv|IV|salt|key|nonce)\s*=\s*["\']([A-Za-z0-9+/=!@#$%^&*]{8,32})["\']'
+        ),
     ),
 ]
 
@@ -57,6 +78,7 @@ def check(ctx: CheckContext) -> list[Finding]:
     findings: list[Finding] = []
     corpus = ctx.all_text
 
+    # MASVS-CRYPTO-1: weak algorithms
     for rule_id, title, indicators, recommendation in WEAK_CRYPTO:
         hits = [ind for ind in indicators if any(ind in t for t in corpus)]
         if hits:
@@ -76,5 +98,33 @@ def check(ctx: CheckContext) -> list[Finding]:
                     masvs="MASVS-CRYPTO-1",
                 )
             )
+
+    # MASVS-CRYPTO-2: hardcoded IV / salt / key
+    hardcoded_hits: list[str] = []
+    for _label, pattern in _HARDCODED_KEY_PATTERNS:
+        for s in corpus:
+            if pattern.search(s):
+                hardcoded_hits.append(s.strip()[:200])
+
+    hardcoded_hits = list(dict.fromkeys(hardcoded_hits))  # deduplicate
+    if hardcoded_hits:
+        findings.append(
+            Finding(
+                rule_id="IOS-SEC-016",
+                title="Hardcoded cryptographic key / IV / salt detected",
+                severity=Severity.HIGH,
+                description=(
+                    f"{len(hardcoded_hits)} potential hardcoded key material string(s) found. "
+                    "Hardcoded IVs, salts, or keys can be trivially extracted from the binary, "
+                    "defeating the purpose of encryption."
+                ),
+                evidence="\n".join(hardcoded_hits[:10]),
+                recommendation=(
+                    "Generate IVs and salts randomly at runtime using SecRandomCopyBytes. "
+                    "Store long-lived keys in the Keychain, never in source code or binary strings."
+                ),
+                masvs="MASVS-CRYPTO-2",
+            )
+        )
 
     return findings

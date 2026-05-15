@@ -1,6 +1,7 @@
 """AND-DEP-011: Third-party SDK fingerprinting (Android SBOM).
 
 Identifies bundled third-party SDKs via DEX package names and native library names.
+Also flags SDKs known for data collection (MASVS-PRIVACY-3).
 """
 
 from __future__ import annotations
@@ -100,6 +101,85 @@ def check(ctx: AndroidCheckContext) -> list[Finding]:
                 ),
                 extra={"sdk_count": len(detected)},
                 masvs="MASVS-SUPPLY-CHAIN-1",
+            )
+        )
+
+    # MASVS-PRIVACY-3: data-collection SDKs
+    _PRIVACY_SDKS: list[tuple[str, str, str]] = [
+        (
+            "com.facebook",
+            "Facebook SDK",
+            "Collects device identifiers and user behaviour for ad targeting.",
+        ),
+        (
+            "com.mixpanel",
+            "Mixpanel",
+            "Collects user events and device data for analytics.",
+        ),
+        (
+            "com.amplitude",
+            "Amplitude",
+            "Collects user behaviour and device information for analytics.",
+        ),
+        (
+            "com.appsflyer",
+            "AppsFlyer",
+            "Collects attribution and device data for mobile marketing.",
+        ),
+        ("com.adjust", "Adjust", "Collects attribution and in-app event data."),
+        ("io.branch", "Branch", "Collects attribution and deep-link data."),
+        (
+            "com.kochava",
+            "Kochava",
+            "Collects device and attribution data for ad measurement.",
+        ),
+        (
+            "com.google.android.gms.ads",
+            "Google AdMob",
+            "Collects device and behavioural data for targeted advertising.",
+        ),
+        (
+            "com.segment",
+            "Segment",
+            "Forwards user events to multiple downstream analytics providers.",
+        ),
+        (
+            "com.moengage",
+            "MoEngage",
+            "Collects user behaviour and device data for customer engagement.",
+        ),
+        (
+            "com.clevertap",
+            "CleverTap",
+            "Collects user events and profile data for engagement analytics.",
+        ),
+    ]
+
+    privacy_hits: list[tuple[str, str]] = []
+    for prefix, sdk_name, description in _PRIVACY_SDKS:
+        if any(prefix in s for s in ctx.dex_strings):
+            privacy_hits.append((sdk_name, description))
+
+    if privacy_hits:
+        evidence_lines = [f"{name}: {desc}" for name, desc in privacy_hits]
+        findings.append(
+            Finding(
+                rule_id="AND-DEP-011-privacy",
+                title=f"{len(privacy_hits)} data-collection SDK(s) detected",
+                severity=Severity.MEDIUM,
+                description=(
+                    f"{len(privacy_hits)} SDK(s) known for collecting user or device data "
+                    "for analytics, advertising, or attribution were detected. "
+                    "Each SDK extends the data shared with third parties and may require "
+                    "disclosure in your Play Store Data Safety section and privacy policy."
+                ),
+                evidence="\n".join(evidence_lines),
+                recommendation=(
+                    "Review each SDK's data collection practices. "
+                    "Declare all collected data types in the Play Store Data Safety section. "
+                    "Obtain user consent before initialising SDKs that process personal data."
+                ),
+                masvs="MASVS-PRIVACY-3",
             )
         )
 

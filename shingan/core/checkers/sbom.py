@@ -47,6 +47,55 @@ SDK_SIGNATURES: list[tuple[str, list[str], str | None]] = [
     ("Cordova/PhoneGap", ["CDVViewController", "Cordova", "phonegap"], None),
 ]
 
+# SDKs known for aggressive or privacy-relevant data collection (MASVS-PRIVACY-3)
+PRIVACY_SDK_SIGNATURES: list[tuple[str, list[str], str]] = [
+    (
+        "Facebook SDK",
+        ["FBSDKCoreKit", "FBSDKLoginKit", "FacebookCore", "com.facebook.sdk"],
+        "Collects device identifiers, app events, and user behaviour for ad targeting.",
+    ),
+    (
+        "Mixpanel",
+        ["Mixpanel", "MPTweakStore"],
+        "Collects user events and device data for analytics.",
+    ),
+    (
+        "Amplitude",
+        ["Amplitude", "AMPRevenue"],
+        "Collects user behaviour and device information for analytics.",
+    ),
+    (
+        "AppsFlyer",
+        ["AppsFlyerLib", "appsflyer"],
+        "Collects attribution and device data for mobile marketing analytics.",
+    ),
+    (
+        "Adjust",
+        ["Adjust", "ADJConfig"],
+        "Collects attribution and in-app event data.",
+    ),
+    (
+        "Branch",
+        ["BranchSDK", "Branch.getInstance"],
+        "Collects attribution and deep-link data.",
+    ),
+    (
+        "Kochava",
+        ["KochavaTracker", "kvTracker"],
+        "Collects device and attribution data for ad measurement.",
+    ),
+    (
+        "Google Mobile Ads / AdMob",
+        ["GADRequest", "GADBannerView", "GoogleMobileAds"],
+        "Collects device and behavioural data for targeted advertising.",
+    ),
+    (
+        "Segment",
+        ["SEGAnalytics", "com.segment.analytics"],
+        "Collects and forwards user events to multiple downstream analytics providers.",
+    ),
+]
+
 
 def _scan_frameworks(app_dir: Path) -> list[str]:
     names: list[str] = []
@@ -110,6 +159,35 @@ def check(ctx: CheckContext) -> list[Finding]:
                 ),
                 extra={"sdks": clean},
                 masvs="MASVS-SUPPLY-CHAIN-1",
+            )
+        )
+
+    # MASVS-PRIVACY-3: data-collection SDKs
+    privacy_detected: list[tuple[str, str]] = []
+    for sdk_name, indicators, description in PRIVACY_SDK_SIGNATURES:
+        if any(ind in t for ind in indicators for t in corpus):
+            privacy_detected.append((sdk_name, description))
+
+    if privacy_detected:
+        evidence_lines = [f"{name}: {desc}" for name, desc in privacy_detected]
+        findings.append(
+            Finding(
+                rule_id="IOS-DEP-011-privacy",
+                title=f"{len(privacy_detected)} data-collection SDK(s) detected",
+                severity=Severity.MEDIUM,
+                description=(
+                    f"{len(privacy_detected)} SDK(s) known for collecting user or device data "
+                    "for analytics, advertising, or attribution were detected. "
+                    "Each SDK extends the data shared with third parties and may require "
+                    "disclosure in your App Privacy label and privacy policy."
+                ),
+                evidence="\n".join(evidence_lines),
+                recommendation=(
+                    "Review each SDK's data collection practices and privacy policy. "
+                    "Declare collected data types accurately in the App Store Privacy Nutrition Label. "
+                    "Obtain user consent before initialising SDKs that process personal data."
+                ),
+                masvs="MASVS-PRIVACY-3",
             )
         )
 
