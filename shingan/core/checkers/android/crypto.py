@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from shingan.core.binary import AndroidCheckContext
+from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
 
 # (rule_id_suffix, label, pattern, severity)

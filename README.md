@@ -283,8 +283,8 @@ uv run pytest -k test_ats   # run a single test
 
 ## Changelog · Roadmap
 
-- [CHANGELOG.md](CHANGELOG.md)
-- [ROADMAP.md](ROADMAP.md)
+- [CHANGELOG.md](docs/CHANGELOG.md)
+- [ROADMAP.md](docs/ROADMAP.md)
 
 ---
 

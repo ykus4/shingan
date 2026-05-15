@@ -31,7 +31,7 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
-from shingan.core.binary import AndroidCheckContext, CheckContext
+from shingan.core.context import AndroidCheckContext, CheckContext
 from shingan.core.models import Finding, Severity
 
 logger = logging.getLogger(__name__)

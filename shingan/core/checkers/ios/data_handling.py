@@ -11,7 +11,7 @@ Maps to MASVS-CODE-3.
 
 from __future__ import annotations
 
-from shingan.core.binary import CheckContext
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
 
 _PASTEBOARD_INDICATORS = (

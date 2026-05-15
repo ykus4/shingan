@@ -12,7 +12,7 @@ import math
 import re
 import subprocess
 
-from shingan.core.binary import CheckContext
+from shingan.core.context import CheckContext
 from shingan.core.constants import (
     ENTROPY_MIN_LEN,
     ENTROPY_SAMPLE_SIZE,

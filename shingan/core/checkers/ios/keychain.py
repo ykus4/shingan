@@ -6,7 +6,7 @@ accessed when the device is unlocked, backed up, or migrated — without user pr
 
 from __future__ import annotations
 
-from shingan.core.binary import CheckContext
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
 
 # Ordered from most permissive (worst) to most restrictive (best)

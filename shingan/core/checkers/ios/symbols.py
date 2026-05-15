@@ -6,7 +6,7 @@ or Swift mangled symbols that assist reverse engineering.
 
 from __future__ import annotations
 
-from shingan.core.binary import CheckContext
+from shingan.core.context import CheckContext
 from shingan.core.constants import EVIDENCE_OBJC_SAMPLE, EVIDENCE_SWIFT_SAMPLE
 from shingan.core.models import Finding, Severity
 

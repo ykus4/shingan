@@ -6,13 +6,13 @@ import json
 import tempfile
 from pathlib import Path
 
-from shingan.core.binary import CheckContext
-from shingan.core.checkers import ats
-from shingan.core.checkers.crypto import check as check_crypto
-from shingan.core.checkers.debug_flags import check as check_debug
-from shingan.core.checkers.metadata import check as check_metadata
-from shingan.core.checkers.protection import check as check_protection
-from shingan.core.checkers.secrets import _shannon_entropy
+from shingan.core.context import CheckContext
+from shingan.core.checkers.ios import ats
+from shingan.core.checkers.ios.crypto import check as check_crypto
+from shingan.core.checkers.ios.debug_flags import check as check_debug
+from shingan.core.checkers.ios.metadata import check as check_metadata
+from shingan.core.checkers.ios.protection import check as check_protection
+from shingan.core.checkers.ios.secrets import _shannon_entropy
 from shingan.core.constants import LSA_SCHEMES_THRESHOLD
 from shingan.core.diff import compare
 from shingan.core.models import Finding, ScanResult, Severity

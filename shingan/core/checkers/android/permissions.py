@@ -5,7 +5,7 @@ Flags apps that declare dangerous or privacy-sensitive permissions in AndroidMan
 
 from __future__ import annotations
 
-from shingan.core.binary import AndroidCheckContext
+from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
 
 # (permission, label, severity, rationale)

@@ -233,7 +233,7 @@ def serve():
     import uvicorn
 
     console.print("[cyan]shingan[/cyan] web UI → [bold]http://localhost:8000[/bold]")
-    uvicorn.run("shingan.api.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("shingan.web.main:app", host="0.0.0.0", port=8000, reload=False)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

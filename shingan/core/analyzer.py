@@ -7,8 +7,8 @@ import logging
 import uuid
 from pathlib import Path
 
-from shingan.core.binary import AndroidCheckContext, CheckContext
-from shingan.core.checkers import (
+from shingan.core.context import AndroidCheckContext, CheckContext
+from shingan.core.checkers.ios import (
     ats,
     binary_protection,
     crypto,

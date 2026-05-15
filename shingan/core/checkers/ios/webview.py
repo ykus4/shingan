@@ -9,7 +9,7 @@ Checks for insecure WebView configurations:
 
 from __future__ import annotations
 
-from shingan.core.binary import CheckContext
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
 
 # Indicators of UIWebView (deprecated since iOS 12, insecure)

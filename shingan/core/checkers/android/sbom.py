@@ -6,7 +6,7 @@ Also flags SDKs known for data collection (MASVS-PRIVACY-3).
 
 from __future__ import annotations
 
-from shingan.core.binary import AndroidCheckContext
+from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
 
 # (package_prefix_or_lib_name, sdk_label)

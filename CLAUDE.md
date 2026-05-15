@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**shingan** is a static security analysis tool for iOS IPA files. It detects reverse-engineering vulnerabilities and maps findings to OWASP MASVS standards. Interfaces: CLI, Web UI, and CI/CD integration (GitHub Actions, Fastlane).
+**shingan** is a static security analysis tool for iOS (IPA) and Android (APK) apps. It detects reverse-engineering vulnerabilities and maps findings to OWASP MASVS standards. Interfaces: CLI, Web UI, and CI/CD integration (GitHub Actions, Fastlane).
 
 ## Commands
 
@@ -29,27 +29,28 @@ Python version: 3.13+
 ## Architecture
 
 ```
-CLI (click) / Web UI (FastAPI) / CI
-          │
-    analyzer.py              ← orchestrates everything
-          │
-    ingest.py                ← extracts IPA / .app / .xcarchive, parses Info.plist
-          │
-    binary.py (CheckContext) ← builds shared, lazily-cached state:
-                               .strings, .lief_binary, .symbol_names, .objc_classes
-          │
-    checkers/ (10 modules)   ← each returns list[Finding]
-          │
-    rules.py                 ← applies custom YAML rules (~/.shingan/rules/*.yaml)
-    suppression.py           ← filters suppressions (~/.shingan/suppressions.json)
-          │
-    storage.py               ← SQLite (~/.shingan/shingan.db); auto-migrates legacy JSON
-    report.py                ← renders JSON / SARIF 2.1.0 / HTML (EN+JA) / text
+shingan/
+├── cli.py                   ← Click CLI entry point
+├── web/
+│   ├── main.py              ← FastAPI app (serve command)
+│   └── templates/           ← Jinja2 HTML templates
+└── core/
+    ├── analyzer.py          ← orchestrates everything; dispatches iOS vs Android
+    ├── ingest.py            ← extracts IPA / APK, parses manifests
+    ├── context.py           ← CheckContext (iOS) + AndroidCheckContext (lazy-cached)
+    ├── models.py            ← Finding, ScanResult, Severity
+    ├── rules.py             ← custom YAML rules (~/.shingan/rules/*.yaml)
+    ├── suppression.py       ← suppressions (~/.shingan/suppressions.json)
+    ├── storage.py           ← SQLite (~/.shingan/shingan.db)
+    ├── report.py            ← JSON / SARIF 2.1.0 / HTML (EN+JA) / text
+    └── checkers/
+        ├── ios/             ← iOS checkers (CheckContext)
+        └── android/         ← Android checkers (AndroidCheckContext)
 ```
 
 ### Checker pattern
 
-Every checker in `shingan/core/checkers/` follows the same interface:
+Every checker in `shingan/core/checkers/ios/` or `shingan/core/checkers/android/` follows the same interface:
 
 ```python
 def check(ctx: CheckContext) -> list[Finding]:
