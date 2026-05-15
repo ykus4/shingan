@@ -1,0 +1,14 @@
+services:
+  shingan:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist scan results, custom rules, and suppressions
+      - shingan-data:/data
+      # Mount a local directory to scan artifacts from the host
+      # Usage: place .ipa / .apk files in ./artifacts/ and reference /artifacts/<file> in the CLI
+      - ./artifacts:/artifacts:ro
+
+volumes:
+  shingan-data:

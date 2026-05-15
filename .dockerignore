@@ -1,0 +1,14 @@
+.git
+.venv
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+shingan.egg-info
+tests/
+docs/
+*.ipa
+*.apk
+*.xcarchive
