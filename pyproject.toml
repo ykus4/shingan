@@ -17,6 +17,12 @@ dependencies = [
     "weasyprint>=61.0",
 ]
 
+[project.optional-dependencies]
+dynamic = [
+    "frida>=16.3.0",
+    "frida-tools>=12.4.0",
+]
+
 [project.scripts]
 shingan = "shingan.cli:cli"
 

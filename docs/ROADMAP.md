@@ -86,16 +86,18 @@
 
 ---
 
-## v0.4 / v1.2 — Dynamic analysis (TODO)
+## v1.2 — Dynamic analysis ✅
 
 > Static signals can only tell you whether a protection *indicator exists*.
 > Confirming that a protection *actually works* requires dynamic testing.
 
-- [ ] **Frida script integration**: attempt SSL pinning bypass → report result
-- [ ] **objection integration**: attempt jailbreak detection bypass
-- [ ] **PT_DENY_ATTACH effectiveness**: attempt LLDB attach → record outcome
-- [ ] **Real device / Simulator mode**: `shingan scan --dynamic --device <udid>`
-- [ ] Combined static + dynamic scoring
+- [x] **Frida script integration**: attempt SSL pinning bypass → report result (IOS-DYN-001)
+- [x] **Frida script integration**: attempt jailbreak detection bypass → report result (IOS-DYN-002)
+- [x] **PT_DENY_ATTACH effectiveness**: attempt LLDB attach → record outcome (IOS-DYN-003)
+- [x] **Real device / Simulator mode**: `shingan scan --dynamic --device <udid>`, `shingan devices`
+- [x] Combined static + dynamic scoring (`summary.static` / `summary.dynamic` breakdown)
+
+Install dynamic extras: `pip install 'shingan[dynamic]'`
 
 ---
 

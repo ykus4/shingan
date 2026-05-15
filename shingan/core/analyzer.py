@@ -49,13 +49,30 @@ def analyze(
     work_dir: Path | None = None,
     suppression_store: SuppressionStore | None = None,
     custom_rules_dir: Path | None = None,
+    dynamic: bool = False,
+    device_udid: str | None = None,
+    dynamic_timeout: int = 30,
 ) -> ScanResult:
     """Run all checkers on an IPA / .app / .xcarchive / .apk and return a ScanResult."""
     if Path(input_path).suffix.lower() == ".apk":
         return _analyze_android(
-            input_path, work_dir, suppression_store, custom_rules_dir
+            input_path,
+            work_dir,
+            suppression_store,
+            custom_rules_dir,
+            dynamic=dynamic,
+            device_udid=device_udid,
+            dynamic_timeout=dynamic_timeout,
         )
-    return _analyze_ios(input_path, work_dir, suppression_store, custom_rules_dir)
+    return _analyze_ios(
+        input_path,
+        work_dir,
+        suppression_store,
+        custom_rules_dir,
+        dynamic=dynamic,
+        device_udid=device_udid,
+        dynamic_timeout=dynamic_timeout,
+    )
 
 
 def _analyze_ios(
@@ -63,6 +80,9 @@ def _analyze_ios(
     work_dir: Path | None = None,
     suppression_store: SuppressionStore | None = None,
     custom_rules_dir: Path | None = None,
+    dynamic: bool = False,
+    device_udid: str | None = None,
+    dynamic_timeout: int = 30,
 ) -> ScanResult:
     """Run all iOS checkers on an IPA / .app / .xcarchive."""
     bundle = ingest(input_path, work_dir)
@@ -122,6 +142,20 @@ def _analyze_ios(
     except Exception:
         logger.exception("Custom rules failed — skipping")
 
+    # Dynamic analysis (optional)
+    if dynamic:
+        try:
+            from shingan.core.dynamic import run_dynamic_checks
+
+            result.findings += run_dynamic_checks(
+                bundle_id=result.app_id,
+                device_udid=device_udid,
+                timeout=dynamic_timeout,
+                platform="ios",
+            )
+        except Exception:
+            logger.exception("Dynamic analysis failed — skipping")
+
     if suppression_store:
         active, suppressed = suppression_store.apply(result.findings)
         result.findings = active
@@ -138,6 +172,9 @@ def _analyze_android(
     work_dir: Path | None = None,
     suppression_store: SuppressionStore | None = None,
     custom_rules_dir: Path | None = None,
+    dynamic: bool = False,
+    device_udid: str | None = None,
+    dynamic_timeout: int = 30,
 ) -> ScanResult:
     """Run all Android checkers on an APK."""
     from shingan.core.ingest import ingest_apk
@@ -176,6 +213,20 @@ def _analyze_android(
             result.findings += checker(ctx)
         except Exception:
             logger.exception("Android checker %s failed — skipping", checker.__module__)
+
+    # Dynamic analysis (optional)
+    if dynamic:
+        try:
+            from shingan.core.dynamic import run_dynamic_checks
+
+            result.findings += run_dynamic_checks(
+                bundle_id=result.app_id,
+                device_udid=device_udid,
+                timeout=dynamic_timeout,
+                platform="android",
+            )
+        except Exception:
+            logger.exception("Dynamic analysis (Android) failed — skipping")
 
     if suppression_store:
         active, suppressed = suppression_store.apply(result.findings)
