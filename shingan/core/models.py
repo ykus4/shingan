@@ -70,6 +70,20 @@ class ScanResult:
     platform: str = "ios"  # "ios" | "android"
 
     def to_dict(self) -> dict:
+        static = [f for f in self.findings if f.extra.get("source") != "dynamic"]
+        dynamic = [f for f in self.findings if f.extra.get("source") == "dynamic"]
+
+        def _counts(findings: list[Finding]) -> dict:
+            return {
+                "high": sum(1 for f in findings if f.severity == Severity.HIGH),
+                "medium": sum(1 for f in findings if f.severity == Severity.MEDIUM),
+                "low": sum(1 for f in findings if f.severity == Severity.LOW),
+                "info": sum(1 for f in findings if f.severity == Severity.INFO),
+            }
+
+        static_counts = _counts(static)
+        dynamic_counts = _counts(dynamic)
+
         return {
             "scan_id": self.scan_id,
             "scanned_at": self.scanned_at,
@@ -79,14 +93,25 @@ class ScanResult:
             "ipa_name": self.ipa_name,
             "platform": self.platform,
             "summary": {
-                "high": sum(1 for f in self.findings if f.severity == Severity.HIGH),
-                "medium": sum(
-                    1 for f in self.findings if f.severity == Severity.MEDIUM
-                ),
-                "low": sum(1 for f in self.findings if f.severity == Severity.LOW),
-                "info": sum(1 for f in self.findings if f.severity == Severity.INFO),
+                # Top-level totals (backward compatible)
+                "high": static_counts["high"] + dynamic_counts["high"],
+                "medium": static_counts["medium"] + dynamic_counts["medium"],
+                "low": static_counts["low"] + dynamic_counts["low"],
+                "info": static_counts["info"] + dynamic_counts["info"],
                 "total": len(self.findings),
                 "suppressed": self.suppressed_count,
+                # Source breakdown (v1.2+)
+                "static": {**static_counts, "total": len(static)},
+                "dynamic": {
+                    **dynamic_counts,
+                    "total": len(dynamic),
+                    "bypassed": sum(
+                        1 for f in dynamic if f.extra.get("outcome") == "bypassed"
+                    ),
+                    "resistant": sum(
+                        1 for f in dynamic if f.extra.get("outcome") == "resistant"
+                    ),
+                },
             },
             "findings": [f.to_dict() for f in self.findings],
         }
