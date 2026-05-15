@@ -13,7 +13,7 @@ from rich import box
 from shingan.core.analyzer import analyze
 from shingan.core.diff import compare
 from shingan.core.models import Severity
-from shingan.core.report import to_json, to_sarif, to_html
+from shingan.core.report import to_html, to_json, to_pdf, to_sarif
 from shingan.core.storage import ScanStore
 
 console = Console(stderr=True)
@@ -212,18 +212,36 @@ def diff(scan_id: str, baseline_id: str):
 @cli.command()
 @click.argument("scan_id")
 @click.option(
-    "--format", "fmt", type=click.Choice(["json", "sarif", "html"]), default="json"
+    "--format",
+    "fmt",
+    type=click.Choice(["json", "sarif", "html", "pdf"]),
+    default="json",
 )
 @click.option("--out", type=click.Path(), required=True)
-def export(scan_id: str, fmt: str, out: str):
+@click.option(
+    "--lang",
+    type=click.Choice(["en", "ja"]),
+    default="en",
+    show_default=True,
+    help="Report language (HTML/PDF only)",
+)
+def export(scan_id: str, fmt: str, out: str, lang: str):
     """Export a stored scan result."""
     try:
         result = store.load(scan_id)
     except FileNotFoundError:
         console.print(f"[red]Scan not found:[/red] {scan_id}")
         sys.exit(1)
-    text = _render(result, fmt)
-    Path(out).write_text(text, encoding="utf-8")
+    if fmt == "pdf":
+        try:
+            pdf_bytes = to_pdf(result, lang=lang)
+            Path(out).write_bytes(pdf_bytes)
+        except RuntimeError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            sys.exit(1)
+    else:
+        text = _render(result, fmt, lang=lang)
+        Path(out).write_text(text, encoding="utf-8")
     console.print(f"[dim]Exported → {out}[/dim]")
 
 
@@ -234,6 +252,109 @@ def serve():
 
     console.print("[cyan]shingan[/cyan] web UI → [bold]http://localhost:8000[/bold]")
     uvicorn.run("shingan.web.main:app", host="0.0.0.0", port=8000, reload=False)
+
+
+@cli.group()
+def suppress():
+    """Manage suppression rules (requires `shingan serve` to be running)."""
+
+
+@suppress.command("add")
+@click.argument("rule_id")
+@click.option(
+    "--evidence-prefix",
+    default="",
+    help="Narrow suppression to a specific evidence prefix",
+)
+@click.option("--reason", default="", help="Reason for suppression")
+@click.option(
+    "--url",
+    default="http://localhost:8000",
+    show_default=True,
+    help="shingan server URL",
+)
+def suppress_add(rule_id: str, evidence_prefix: str, reason: str, url: str):
+    """Add a suppression rule via the running web server."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    payload = json.dumps(
+        {"rule_id": rule_id, "evidence_prefix": evidence_prefix, "reason": reason}
+    ).encode()
+    req = urllib.request.Request(
+        f"{url}/api/suppressions",
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        console.print(f"[green]Suppression added:[/green] {data['rule_id']}")
+    except urllib.error.HTTPError as e:
+        console.print(f"[red]HTTP {e.code}:[/red] {e.read().decode()}")
+        sys.exit(1)
+    except Exception as e:
+        console.print(
+            f"[red]Error:[/red] {e}\n[dim]Is `shingan serve` running at {url}?[/dim]"
+        )
+        sys.exit(1)
+
+
+@suppress.command("list")
+@click.option(
+    "--url",
+    default="http://localhost:8000",
+    show_default=True,
+    help="shingan server URL",
+)
+def suppress_list(url: str):
+    """List all active suppression rules."""
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{url}/api/suppressions", timeout=10) as resp:
+            items = json.loads(resp.read())
+    except Exception as e:
+        console.print(
+            f"[red]Error:[/red] {e}\n[dim]Is `shingan serve` running at {url}?[/dim]"
+        )
+        sys.exit(1)
+    if not items:
+        console.print("[dim]No suppressions.[/dim]")
+        return
+    table = Table(box=box.SIMPLE_HEAD, show_header=True, header_style="bold cyan")
+    table.add_column("Rule ID")
+    table.add_column("Evidence Prefix")
+    table.add_column("Reason")
+    for s in items:
+        table.add_row(s["rule_id"], s.get("evidence_prefix", ""), s.get("reason", ""))
+    console.print(table)
+
+
+@suppress.command("remove")
+@click.argument("rule_id")
+@click.option("--evidence-prefix", default="", help="Evidence prefix to match")
+@click.option("--url", default="http://localhost:8000", show_default=True)
+def suppress_remove(rule_id: str, evidence_prefix: str, url: str):
+    """Remove a suppression rule."""
+    import json
+    import urllib.parse
+    import urllib.request
+
+    params = f"rule_id={urllib.parse.quote(rule_id)}"
+    if evidence_prefix:
+        params += f"&evidence_prefix={urllib.parse.quote(evidence_prefix)}"
+    req = urllib.request.Request(f"{url}/api/suppressions?{params}", method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        console.print(f"[green]Removed:[/green] {data['removed']} suppression(s)")
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

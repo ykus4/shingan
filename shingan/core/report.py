@@ -114,6 +114,30 @@ def to_sarif(result: ScanResult) -> str:
     return json.dumps(sarif, ensure_ascii=False, indent=2)
 
 
+def to_pdf(
+    result: ScanResult,
+    diff_new: set[str] | None = None,
+    diff_fixed: set[str] | None = None,
+    lang: str = "en",
+) -> bytes:
+    """Render result as a PDF via WeasyPrint.
+
+    Requires: ``pip install weasyprint``
+    On macOS: ``brew install cairo pango``
+    """
+    try:
+        from weasyprint import HTML as _HTML
+    except ImportError as exc:
+        raise RuntimeError(
+            "weasyprint is required for PDF export. "
+            "Install it with: pip install weasyprint\n"
+            "On macOS also run: brew install cairo pango"
+        ) from exc
+
+    html_str = to_html(result, diff_new=diff_new, diff_fixed=diff_fixed, lang=lang)
+    return _HTML(string=html_str).write_pdf()
+
+
 def to_html(
     result: ScanResult,
     diff_new: set[str] | None = None,

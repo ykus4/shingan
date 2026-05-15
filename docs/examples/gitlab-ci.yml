@@ -1,0 +1,56 @@
+# shingan — GitLab CI example
+#
+# Copy the relevant stages into your project's .gitlab-ci.yml.
+# Requires: shingan installed, and an IPA or APK artifact available.
+#
+# Variables you should override per-project:
+#   ARTIFACT_PATH  — path to your IPA/APK build artifact
+#   FAIL_ON        — minimum severity to fail the pipeline (high/medium/low/none)
+
+stages:
+  - build
+  - security
+
+variables:
+  ARTIFACT_PATH: "build/MyApp.ipa"
+  FAIL_ON: "high"
+
+shingan-scan:
+  stage: security
+  image: python:3.13-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y --no-install-recommends binutils -qq
+    - pip install shingan --quiet
+  script:
+    - shingan scan "$ARTIFACT_PATH"
+        --format sarif
+        --out gl-sast-report.json
+        --fail-on "$FAIL_ON"
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    paths:
+      - gl-sast-report.json
+    expire_in: 1 week
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  allow_failure: false
+
+# Optional: export full HTML report as a browsable artifact
+shingan-report:
+  stage: security
+  image: python:3.13-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y --no-install-recommends binutils -qq
+    - pip install shingan --quiet
+  script:
+    - shingan scan "$ARTIFACT_PATH" --format json --out /tmp/result.json --no-save
+    - shingan export $(cat /tmp/result.json | python3 -c "import sys,json; print(json.load(sys.stdin)['scan_id'])")
+        --format html --out shingan-report.html
+  artifacts:
+    paths:
+      - shingan-report.html
+    expire_in: 1 week
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
