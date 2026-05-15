@@ -65,8 +65,10 @@ async def scan_detail(request: Request, scan_id: str, baseline_id: str | None = 
 @app.post("/api/scans")
 async def upload_and_scan(file: UploadFile = File(...)):
     name = file.filename or ""
-    if not name.endswith((".ipa", ".app")):
-        raise HTTPException(status_code=400, detail="Only .ipa files are accepted")
+    if not name.endswith((".ipa", ".app", ".apk")):
+        raise HTTPException(
+            status_code=400, detail="Only .ipa or .apk files are accepted"
+        )
 
     with tempfile.TemporaryDirectory(prefix="shingan_upload_") as tmp:
         input_path = Path(tmp) / name
