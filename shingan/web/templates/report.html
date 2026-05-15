@@ -7,9 +7,27 @@
 <style>
   :root {
     --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3e;
-    --text: #e2e8f0; --muted: #718096;
+    --text: #e2e8f0; --muted: #718096; --evidence-bg: #0d1117;
     --high: #fc8181; --medium: #f6ad55; --low: #68d391; --info: #76e4f7;
     --high-bg: #2d1515; --medium-bg: #2d1f0a; --low-bg: #0f2d1a; --info-bg: #0a1f2d;
+  }
+  [data-theme="light"] {
+    --bg: #f8fafc; --surface: #ffffff; --border: #e2e8f0;
+    --text: #1a202c; --muted: #718096; --evidence-bg: #f1f5f9;
+    --high-bg: #fff5f5; --medium-bg: #fffaf0; --low-bg: #f0fff4; --info-bg: #ebfcff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f8fafc; --surface: #ffffff; --border: #e2e8f0;
+      --text: #1a202c; --muted: #718096; --evidence-bg: #f1f5f9;
+      --high-bg: #fff5f5; --medium-bg: #fffaf0; --low-bg: #f0fff4; --info-bg: #ebfcff;
+    }
+  }
+  @page { size: A4; margin: 20mm; }
+  @media print {
+    .finding-body { display: block !important; }
+    .finding-header { cursor: default; }
+    #themeToggle { display: none; }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; line-height: 1.6; }
@@ -39,7 +57,7 @@
   .finding-body { padding: 0 18px 14px; border-top: 1px solid var(--border); display: none; }
   .finding-body.open { display: block; }
   .finding-body p { margin-top: 10px; color: var(--muted); font-family: -apple-system, sans-serif; font-size: 13px; }
-  .evidence { background: #0d1117; border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-top: 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all; color: #a0aec0; max-height: 200px; overflow-y: auto; }
+  .evidence { background: var(--evidence-bg); border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-top: 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all; color: var(--muted); max-height: 200px; overflow-y: auto; }
   .evidence-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 12px; }
   .rec { background: rgba(118, 228, 247, 0.05); border-left: 3px solid var(--info); padding: 10px 14px; margin-top: 10px; border-radius: 0 4px 4px 0; font-family: -apple-system, sans-serif; font-size: 13px; }
   .diff-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
@@ -49,9 +67,12 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>shin<span>gan</span></h1>
-  <div class="meta">{{ ipa_name }} &nbsp;·&nbsp; {{ app_id }} {{ app_version }} ({{ build }}) &nbsp;·&nbsp; {{ scanned_at }}</div>
+<header style="display:flex;align-items:center;justify-content:space-between;">
+  <div>
+    <h1>shin<span>gan</span></h1>
+    <div class="meta">{{ ipa_name }} &nbsp;·&nbsp; {{ app_id }} {{ app_version }} ({{ build }}) &nbsp;·&nbsp; {{ scanned_at }}</div>
+  </div>
+  <button id="themeToggle" onclick="toggleTheme()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;color:var(--muted);font-size:14px;" title="Toggle light/dark mode">🌙</button>
 </header>
 <div class="container">
   <div class="summary">
@@ -87,6 +108,23 @@
       h.nextElementSibling.classList.toggle('open');
     });
   });
+
+  function toggleTheme() {
+    const current = document.documentElement.dataset.theme;
+    const next = (current === 'light') ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('shingan-theme', next);
+    document.getElementById('themeToggle').textContent = (next === 'light') ? '☀️' : '🌙';
+  }
+
+  (function () {
+    const saved = localStorage.getItem('shingan-theme');
+    const preferLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+    const theme = saved || (preferLight ? 'light' : 'dark');
+    document.documentElement.dataset.theme = theme;
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.textContent = (theme === 'light') ? '☀️' : '🌙';
+  })();
 </script>
 </body>
 </html>

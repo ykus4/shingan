@@ -11,6 +11,18 @@
     --accent: #76e4f7; --accent-dim: rgba(118,228,247,0.1);
     --high: #fc8181; --medium: #f6ad55; --low: #68d391; --info: #76e4f7;
   }
+  [data-theme="light"] {
+    --bg: #f8fafc; --surface: #ffffff; --border: #e2e8f0;
+    --text: #1a202c; --muted: #718096;
+    --accent: #0ea5e9; --accent-dim: rgba(14,165,233,0.1);
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f8fafc; --surface: #ffffff; --border: #e2e8f0;
+      --text: #1a202c; --muted: #718096;
+      --accent: #0ea5e9; --accent-dim: rgba(14,165,233,0.1);
+    }
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; line-height: 1.6; min-height: 100vh; }
   header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 20px 32px; display: flex; align-items: center; gap: 16px; }
@@ -69,7 +81,11 @@
 <header>
   <div>
     <h1>shin<span>gan</span></h1>
-    <div class="tagline">iOS IPA 解析耐性チェッカー</div>
+    <div class="tagline">iOS / Android 解析耐性チェッカー</div>
+  </div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:12px;">
+    <a href="/docs" style="color:var(--muted);font-size:11px;text-decoration:none;border:1px solid var(--border);border-radius:4px;padding:4px 10px;">API Docs</a>
+    <button id="themeToggle" onclick="toggleTheme()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;color:var(--muted);font-size:14px;" title="Toggle light/dark mode">🌙</button>
   </div>
 </header>
 
@@ -167,6 +183,23 @@ async function startScan() {
     scanBtn.disabled = false;
   }
 }
+
+  function toggleTheme() {
+    const current = document.documentElement.dataset.theme;
+    const next = (current === 'light') ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('shingan-theme', next);
+    document.getElementById('themeToggle').textContent = (next === 'light') ? '☀️' : '🌙';
+  }
+
+  (function () {
+    const saved = localStorage.getItem('shingan-theme');
+    const preferLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+    const theme = saved || (preferLight ? 'light' : 'dark');
+    document.documentElement.dataset.theme = theme;
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.textContent = (theme === 'light') ? '☀️' : '🌙';
+  })();
 </script>
 </body>
 </html>
