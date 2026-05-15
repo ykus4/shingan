@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
 from shingan.core.models import ScanResult
 
-DEFAULT_DB = Path.home() / ".shingan" / "shingan.db"
-_LEGACY_SCANS_DIR = Path.home() / ".shingan" / "scans"
+_SHINGAN_HOME = (
+    Path(os.environ["SHINGAN_HOME"])
+    if "SHINGAN_HOME" in os.environ
+    else Path.home() / ".shingan"
+)
+DEFAULT_DB = _SHINGAN_HOME / "shingan.db"
+_LEGACY_SCANS_DIR = _SHINGAN_HOME / "scans"
 
 
 @contextmanager
