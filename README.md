@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="shingan_logo.png" alt="shingan" width="360" />
+<img src="docs/shingan_logo.png" alt="shingan" width="360" />
 
 **Static security analysis for iOS IPA and Android APK**
 
@@ -80,6 +80,30 @@ All findings are mapped to **[OWASP MASVS](https://mas.owasp.org/MASVS/)**.
 ---
 
 ## Installation
+
+### Docker (recommended)
+
+```bash
+# Web UI
+docker run -p 8000:8000 -v shingan-data:/data ghcr.io/ykus4/shingan
+
+# CLI — mount a local directory containing your IPA/APK
+docker run --rm \
+  -v shingan-data:/data \
+  -v /path/to/artifacts:/artifacts:ro \
+  ghcr.io/ykus4/shingan \
+  uv run shingan scan /artifacts/MyApp.ipa
+```
+
+Or with docker compose:
+
+```bash
+# place .ipa / .apk files in ./artifacts/
+docker compose up
+# → http://localhost:8000
+```
+
+### From source
 
 > Requires Python 3.13+ and **[uv](https://docs.astral.sh/uv/)**.
 
