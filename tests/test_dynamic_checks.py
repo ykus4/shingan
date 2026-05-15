@@ -237,3 +237,58 @@ def test_list_simulators_parses_booted_only():
     assert devices[0].udid == "ABC-123"
     assert devices[0].kind == "simulator"
     assert devices[0].os_version == "iOS 17.4"
+
+
+# ── device listing: adb emulator ─────────────────────────────────────────────
+
+
+def test_list_emulators_via_adb_parses_emulator():
+    from shingan.core.dynamic.device import _list_emulators_via_adb
+
+    adb_output = (
+        "List of devices attached\n"
+        "emulator-5554          device product:sdk_gphone_x86_64 model:sdk_gphone_x86_64 device:emu64xa\n"
+        "192.168.1.10:5555      device product:taimen model:Pixel_2 device:taimen\n"
+    )
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.stdout = adb_output
+
+    with patch("subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            mock_proc,  # adb devices -l
+            MagicMock(stdout="10"),  # getprop emulator-5554
+            MagicMock(stdout="14"),  # getprop 192.168.1.10:5555
+        ]
+        devices = _list_emulators_via_adb()
+
+    assert len(devices) == 2
+    emu = next(d for d in devices if d.udid == "emulator-5554")
+    assert emu.kind == "emulator"
+    assert emu.os_version == "Android 10"
+
+    real = next(d for d in devices if d.udid == "192.168.1.10:5555")
+    assert real.kind == "usb"
+
+
+def test_list_emulators_returns_empty_on_adb_failure():
+    from shingan.core.dynamic.device import _list_emulators_via_adb
+
+    with patch("subprocess.run", side_effect=FileNotFoundError):
+        result = _list_emulators_via_adb()
+
+    assert result == []
+
+
+def test_list_emulators_skips_offline():
+    from shingan.core.dynamic.device import _list_emulators_via_adb
+
+    adb_output = "List of devices attached\nemulator-5554          offline\n"
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.stdout = adb_output
+
+    with patch("subprocess.run", return_value=mock_proc):
+        devices = _list_emulators_via_adb()
+
+    assert devices == []

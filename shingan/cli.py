@@ -285,15 +285,19 @@ def list_devices_cmd():
 
     if not devices:
         console.print(
-            "[dim]No devices found.[/dim]\n"
-            "Connect a device via USB or boot a simulator, then try again.\n"
-            "frida must be installed for USB/remote devices: "
-            "[cyan]pip install 'shingan[dynamic]'[/cyan]"
+            "[dim]No devices found.[/dim]\n\n"
+            "[bold]iOS:[/bold] Connect a device via USB or boot a simulator.\n"
+            "[bold]Android:[/bold] Connect a device via USB or start an emulator, "
+            "then push frida-server:\n"
+            "  [dim]adb push frida-server /data/local/tmp/[/dim]\n"
+            "  [dim]adb shell 'chmod 755 /data/local/tmp/frida-server && "
+            "/data/local/tmp/frida-server &'[/dim]\n\n"
+            "Frida must be installed: [cyan]pip install 'shingan[dynamic]'[/cyan]"
         )
         return
 
     table = Table(box=box.SIMPLE_HEAD, show_header=True, header_style="bold cyan")
-    table.add_column("UDID", style="dim", width=40)
+    table.add_column("Serial / UDID", style="dim", width=40)
     table.add_column("Name")
     table.add_column("Type", width=10)
     table.add_column("OS")

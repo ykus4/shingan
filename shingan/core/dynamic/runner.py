@@ -67,6 +67,12 @@ def run_dynamic_checks(
     with DynamicContext(
         bundle_id=bundle_id, device_udid=device_udid, timeout=timeout
     ) as ctx:
+        try:
+            ctx.get_device()
+        except Exception as exc:
+            logger.debug("Device not reachable: %s", exc)
+            return _device_unavailable_findings(platform, str(exc))
+
         for checker in checkers:
             try:
                 findings += checker(ctx)
@@ -90,6 +96,43 @@ def _unavailable_findings(platform: str) -> list[Finding]:
             ),
             evidence="frida ImportError",
             recommendation="pip install 'shingan[dynamic]'",
+            masvs=masvs,
+            extra={"source": "dynamic", "outcome": "unavailable"},
+        )
+        for rule_id, title, masvs in specs
+    ]
+
+
+def _device_unavailable_findings(platform: str, error: str) -> list[Finding]:
+    if platform == "android":
+        description = (
+            "Could not reach a Frida-enabled Android device or emulator. "
+            "Ensure frida-server is running on the device:\n\n"
+            "  # Push and start frida-server (replace <arch> with x86_64/arm64/etc.)\n"
+            "  adb push frida-server /data/local/tmp/\n"
+            "  adb shell 'chmod 755 /data/local/tmp/frida-server'\n"
+            "  adb shell '/data/local/tmp/frida-server &'\n\n"
+            "For Android emulators, the same steps apply. "
+            "Run `shingan devices` to confirm the device is visible."
+        )
+        specs = _ANDROID_UNAVAILABLE
+    else:
+        description = (
+            "Could not reach a Frida-enabled iOS device or simulator. "
+            "Ensure the device is connected via USB and frida-server is running, "
+            "or that the target simulator is booted. "
+            "Run `shingan devices` to confirm the device is visible."
+        )
+        specs = _IOS_UNAVAILABLE
+
+    return [
+        Finding(
+            rule_id=rule_id,
+            title=title,
+            severity=Severity.INFO,
+            description=description,
+            evidence=error[:300],
+            recommendation="Run `shingan devices` to list reachable devices.",
             masvs=masvs,
             extra={"source": "dynamic", "outcome": "unavailable"},
         )
