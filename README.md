@@ -23,6 +23,7 @@ Visualize where your app is vulnerable to reverse engineering — before you shi
               ┌───────────────┐
               │    shingan    │
               │  10+ checkers │
+              │  + dynamic*   │
               └───────┬───────┘
                       │
         ┌─────────────┼─────────────┐
@@ -30,6 +31,8 @@ Visualize where your app is vulnerable to reverse engineering — before you shi
     terminal       HTML report    SARIF
     (rich table)   (EN / JA)      (GitHub Code Scanning)
 ```
+
+> \* Dynamic analysis requires `pip install 'shingan[dynamic]'` (Frida + Xcode).
 
 ---
 
@@ -77,6 +80,19 @@ Visualize where your app is vulnerable to reverse engineering — before you shi
 
 All findings are mapped to **[OWASP MASVS](https://mas.owasp.org/MASVS/)**.
 
+<details>
+<summary><strong>Dynamic checks (v1.2)</strong> — requires <code>pip install 'shingan[dynamic]'</code></summary>
+
+| Rule ID | What it tests |
+|---|---|
+| `IOS-DYN-001` | SSL pinning bypass via Frida — does pinning actually block a MITM? |
+| `IOS-DYN-002` | Jailbreak detection bypass via Frida — can detection be circumvented? |
+| `IOS-DYN-003` | `PT_DENY_ATTACH` effectiveness — does LLDB attach succeed? |
+
+Outcomes: `bypassed` (HIGH) · `resistant` (INFO) · `unavailable` (INFO) · `error` (MEDIUM)
+
+</details>
+
 ---
 
 ## Installation
@@ -111,6 +127,10 @@ docker compose up
 git clone https://github.com/ykus4/shingan.git
 cd shingan
 uv sync
+
+# Enable dynamic analysis (Frida-based runtime checks)
+uv sync --extra dynamic
+# Also requires Xcode for lldb: xcode-select --install
 ```
 
 ---
@@ -145,10 +165,16 @@ uv run shingan scan MyApp.ipa --fail-on high
 # Diff against a previous scan
 uv run shingan scan MyApp.ipa --baseline <scan_id>
 
+# Dynamic analysis (requires shingan[dynamic])
+uv run shingan devices                                    # list connected devices + simulators
+uv run shingan scan MyApp.ipa --dynamic                  # static + dynamic on USB device
+uv run shingan scan MyApp.ipa --dynamic --device <udid>  # target a specific device/simulator
+
 # Manage stored scans
 uv run shingan list
 uv run shingan diff <scan_id> <baseline_id>
 uv run shingan export <scan_id> --format html --out report.html
+uv run shingan export <scan_id> --format pdf  --out report.pdf
 ```
 
 ---
@@ -203,7 +229,8 @@ end
 | `text` | Terminal — rich table with severity colors |
 | `json` | Automation, custom dashboards |
 | `sarif` | GitHub Code Scanning (SARIF 2.1.0) |
-| `html` | Human review — self-contained dark-mode report, `--lang en\|ja` |
+| `html` | Human review — self-contained dark/light-mode report, `--lang en\|ja` |
+| `pdf` | Shareable reports (requires `weasyprint`) |
 
 ---
 
