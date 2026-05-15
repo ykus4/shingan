@@ -76,6 +76,25 @@ def cli():
     show_default=True,
     help="Report language (HTML only)",
 )
+@click.option(
+    "--dynamic/--no-dynamic",
+    default=False,
+    help="Also run dynamic checks against a live device (requires frida + running app)",
+)
+@click.option(
+    "--device",
+    "device_udid",
+    default=None,
+    metavar="UDID",
+    help="Target device UDID for dynamic analysis (default: first USB device)",
+)
+@click.option(
+    "--dynamic-timeout",
+    default=30,
+    show_default=True,
+    type=int,
+    help="Per-check timeout for dynamic analysis (seconds)",
+)
 def scan(
     artifact: str,
     fmt: str,
@@ -84,13 +103,21 @@ def scan(
     save: bool,
     baseline: str | None,
     lang: str,
+    dynamic: bool,
+    device_udid: str | None,
+    dynamic_timeout: int,
 ):
     """Scan an IPA or APK file for reverse-engineering vulnerabilities."""
     ipa_path = Path(artifact)
     console.print(f"[cyan]shingan[/cyan] scanning [bold]{ipa_path.name}[/bold] …")
 
     try:
-        result = analyze(ipa_path)
+        result = analyze(
+            ipa_path,
+            dynamic=dynamic,
+            device_udid=device_udid,
+            dynamic_timeout=dynamic_timeout,
+        )
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(2)
@@ -243,6 +270,36 @@ def export(scan_id: str, fmt: str, out: str, lang: str):
         text = _render(result, fmt, lang=lang)
         Path(out).write_text(text, encoding="utf-8")
     console.print(f"[dim]Exported → {out}[/dim]")
+
+
+@cli.command("devices")
+def list_devices_cmd():
+    """List available devices and simulators for dynamic analysis."""
+    from shingan.core.dynamic.device import list_devices, _list_simulators_via_xcrun
+
+    try:
+        devices = list_devices()
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        devices = _list_simulators_via_xcrun()
+
+    if not devices:
+        console.print(
+            "[dim]No devices found.[/dim]\n"
+            "Connect a device via USB or boot a simulator, then try again.\n"
+            "frida must be installed for USB/remote devices: "
+            "[cyan]pip install 'shingan[dynamic]'[/cyan]"
+        )
+        return
+
+    table = Table(box=box.SIMPLE_HEAD, show_header=True, header_style="bold cyan")
+    table.add_column("UDID", style="dim", width=40)
+    table.add_column("Name")
+    table.add_column("Type", width=10)
+    table.add_column("OS")
+    for d in devices:
+        table.add_row(d.udid, d.name, d.kind, d.os_version)
+    console.print(table)
 
 
 @cli.command()
