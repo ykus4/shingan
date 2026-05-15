@@ -7,7 +7,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from shingan.core.binary import CheckContext
+from shingan.core.binary import AndroidCheckContext, CheckContext
 from shingan.core.checkers import (
     ats,
     binary_protection,
@@ -20,7 +20,19 @@ from shingan.core.checkers import (
     secrets,
     symbols,
 )
-from shingan.core.ingest import ingest
+from shingan.core.checkers.android import (
+    binary_protection as android_binary_protection,
+    crypto as android_crypto,
+    debug_flags as android_debug_flags,
+    manifest as android_manifest,
+    network_security as android_network_security,
+    permissions as android_permissions,
+    protection as android_protection,
+    sbom as android_sbom,
+    secrets as android_secrets,
+    signing as android_signing,
+)
+from shingan.core.ingest import APKBundle, ingest
 from shingan.core.models import ScanResult
 from shingan.core.rules import DEFAULT_RULES_DIR, apply_custom_rules
 from shingan.core.suppression import SuppressionStore
@@ -34,7 +46,21 @@ def analyze(
     suppression_store: SuppressionStore | None = None,
     custom_rules_dir: Path | None = None,
 ) -> ScanResult:
-    """Run all checkers on an IPA / .app / .xcarchive and return a ScanResult."""
+    """Run all checkers on an IPA / .app / .xcarchive / .apk and return a ScanResult."""
+    if Path(input_path).suffix.lower() == ".apk":
+        return _analyze_android(
+            input_path, work_dir, suppression_store, custom_rules_dir
+        )
+    return _analyze_ios(input_path, work_dir, suppression_store, custom_rules_dir)
+
+
+def _analyze_ios(
+    input_path: Path,
+    work_dir: Path | None = None,
+    suppression_store: SuppressionStore | None = None,
+    custom_rules_dir: Path | None = None,
+) -> ScanResult:
+    """Run all iOS checkers on an IPA / .app / .xcarchive."""
     bundle = ingest(input_path, work_dir)
 
     info = bundle.info_plist
@@ -45,6 +71,7 @@ def analyze(
         app_version=info.get("CFBundleShortVersionString", "unknown"),
         build=info.get("CFBundleVersion", "unknown"),
         ipa_name=bundle.ipa_path.name,
+        platform="ios",
     )
 
     # Build one shared context — strings and binary are parsed lazily and cached.
@@ -88,6 +115,59 @@ def analyze(
         result.findings += apply_custom_rules(ctx, rules_dir=rules_dir)
     except Exception:
         logger.exception("Custom rules failed — skipping")
+
+    if suppression_store:
+        active, suppressed = suppression_store.apply(result.findings)
+        result.findings = active
+        result.suppressed_count = len(suppressed)
+
+    if work_dir is None:
+        bundle.cleanup()
+
+    return result
+
+
+def _analyze_android(
+    input_path: Path,
+    work_dir: Path | None = None,
+    suppression_store: SuppressionStore | None = None,
+    custom_rules_dir: Path | None = None,
+) -> ScanResult:
+    """Run all Android checkers on an APK."""
+    from shingan.core.ingest import ingest_apk
+
+    bundle = ingest_apk(input_path, work_dir)
+    assert isinstance(bundle, APKBundle)
+
+    result = ScanResult(
+        scan_id=str(uuid.uuid4()),
+        scanned_at=datetime.datetime.utcnow().isoformat() + "Z",
+        app_id=bundle.package_name,
+        app_version=bundle.version_name,
+        build=bundle.version_code,
+        ipa_name=bundle.apk_path.name,
+        platform="android",
+    )
+
+    ctx = AndroidCheckContext(apk_path=bundle.apk_path, work_dir=bundle.work_dir)
+
+    checkers = [
+        android_manifest.check,
+        android_debug_flags.check,
+        android_network_security.check,
+        android_binary_protection.check,
+        android_crypto.check,
+        android_secrets.check,
+        android_protection.check,
+        android_permissions.check,
+        android_sbom.check,
+        android_signing.check,
+    ]
+    for checker in checkers:
+        try:
+            result.findings += checker(ctx)
+        except Exception:
+            logger.exception("Android checker %s failed — skipping", checker.__module__)
 
     if suppression_store:
         active, suppressed = suppression_store.apply(result.findings)
