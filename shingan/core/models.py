@@ -59,14 +59,15 @@ class Finding:
 
 @dataclass
 class ScanResult:
-    app_id: str  # CFBundleIdentifier
-    app_version: str  # CFBundleShortVersionString
-    build: str  # CFBundleVersion
-    ipa_name: str
+    app_id: str  # CFBundleIdentifier / package name
+    app_version: str  # CFBundleShortVersionString / versionName
+    build: str  # CFBundleVersion / versionCode
+    ipa_name: str  # artifact filename (IPA or APK)
     findings: list[Finding] = field(default_factory=list)
     scan_id: str = ""
     scanned_at: str = ""
     suppressed_count: int = 0
+    platform: str = "ios"  # "ios" | "android"
 
     def to_dict(self) -> dict:
         return {
@@ -76,6 +77,7 @@ class ScanResult:
             "app_version": self.app_version,
             "build": self.build,
             "ipa_name": self.ipa_name,
+            "platform": self.platform,
             "summary": {
                 "high": sum(1 for f in self.findings if f.severity == Severity.HIGH),
                 "medium": sum(
@@ -99,6 +101,7 @@ class ScanResult:
             build=d["build"],
             ipa_name=d["ipa_name"],
             suppressed_count=d.get("summary", {}).get("suppressed", 0),
+            platform=d.get("platform", "ios"),
         )
         result.findings = [Finding.from_dict(f) for f in d.get("findings", [])]
         return result

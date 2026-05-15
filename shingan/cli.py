@@ -36,11 +36,11 @@ SEVERITY_ORDER = {
 
 @click.group()
 def cli():
-    """shingan — iOS IPA 解析耐性チェッカー"""
+    """shingan — iOS/Android 解析耐性チェッカー"""
 
 
 @cli.command()
-@click.argument("ipa", type=click.Path(exists=True, dir_okay=False))
+@click.argument("artifact", type=click.Path(exists=True, dir_okay=False))
 @click.option(
     "--format",
     "fmt",
@@ -77,7 +77,7 @@ def cli():
     help="Report language (HTML only)",
 )
 def scan(
-    ipa: str,
+    artifact: str,
     fmt: str,
     out: str | None,
     fail_on: str,
@@ -85,8 +85,8 @@ def scan(
     baseline: str | None,
     lang: str,
 ):
-    """Scan an IPA file for reverse-engineering vulnerabilities."""
-    ipa_path = Path(ipa)
+    """Scan an IPA or APK file for reverse-engineering vulnerabilities."""
+    ipa_path = Path(artifact)
     console.print(f"[cyan]shingan[/cyan] scanning [bold]{ipa_path.name}[/bold] …")
 
     try:
