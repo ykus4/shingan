@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import logging
 
-from shingan.core.binary import AndroidCheckContext
-from shingan.core.checkers.secrets import SECRET_PATTERNS, _shannon_entropy
+from shingan.core.context import AndroidCheckContext
+from shingan.core.checkers.ios.secrets import SECRET_PATTERNS, _shannon_entropy
 from shingan.core.constants import (
     ENTROPY_MIN_LEN,
     ENTROPY_SAMPLE_SIZE,

@@ -19,8 +19,7 @@ from shingan.core.suppression import SuppressionStore
 
 app = FastAPI(title="shingan", version="1.0.0")
 
-_HERE = Path(__file__).parent
-_WEB = _HERE.parent / "web"
+_WEB = Path(__file__).parent
 templates = Jinja2Templates(directory=str(_WEB / "templates"))
 store = ScanStore()
 sup_store = SuppressionStore()

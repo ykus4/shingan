@@ -9,7 +9,7 @@ is effective — dynamic testing (objection/frida) is required for that.
 
 from __future__ import annotations
 
-from shingan.core.binary import CheckContext
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
 
 # --- Jailbreak detection indicators ---

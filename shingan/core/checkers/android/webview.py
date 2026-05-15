@@ -9,7 +9,7 @@ Checks for insecure WebView configurations:
 
 from __future__ import annotations
 
-from shingan.core.binary import AndroidCheckContext
+from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
 
 

@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from shingan.core.binary import AndroidCheckContext
+from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
 
 logger = logging.getLogger(__name__)

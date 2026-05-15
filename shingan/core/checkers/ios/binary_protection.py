@@ -5,7 +5,7 @@ Checks for PIE, stack canary, and ARC via Mach-O load commands and symbol table.
 
 from __future__ import annotations
 
-from shingan.core.binary import CheckContext
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
 
 

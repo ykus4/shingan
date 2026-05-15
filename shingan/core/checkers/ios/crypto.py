@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from shingan.core.binary import CheckContext
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
 
 WEAK_CRYPTO: list[tuple[str, str, list[str], str]] = [

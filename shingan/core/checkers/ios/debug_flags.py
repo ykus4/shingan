@@ -7,7 +7,7 @@ import plistlib
 import re
 import subprocess
 
-from shingan.core.binary import CheckContext
+from shingan.core.context import CheckContext
 from shingan.core.constants import EVIDENCE_DEBUG_SAMPLE
 from shingan.core.models import Finding, Severity
 

@@ -8,7 +8,7 @@ Checks:
 
 from __future__ import annotations
 
-from shingan.core.binary import AndroidCheckContext
+from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
 
 # Devices running Android < 6.0 (API 23) don't support runtime permissions.
