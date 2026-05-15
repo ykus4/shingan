@@ -2,9 +2,9 @@
 
 <img src="docs/shingan_logo.png" alt="shingan" width="360" />
 
-**Static security analysis for iOS IPA and Android APK**
+**Static + dynamic security analysis for iOS and Android apps**
 
-Visualize where your app is vulnerable to reverse engineering — before you ship.
+Visualize where your app is exposed to reverse engineering — before you ship.
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -20,26 +20,26 @@ Visualize where your app is vulnerable to reverse engineering — before you shi
            │                         │
            └──────────┬──────────────┘
                       ▼
-              ┌───────────────┐
-              │    shingan    │
-              │  10+ checkers │
-              │  + dynamic*   │
-              └───────┬───────┘
-                      │
-        ┌─────────────┼─────────────┐
-        ▼             ▼             ▼
-    terminal       HTML report    SARIF
-    (rich table)   (EN / JA)      (GitHub Code Scanning)
+              ┌───────────────────┐
+              │      shingan      │
+              │  static checkers  │
+              │  dynamic checks*  │
+              └────────┬──────────┘
+                       │
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
+    terminal       HTML report     SARIF
+    (rich table)   (EN / JA)       (GitHub Code Scanning)
 ```
 
-> \* Dynamic analysis requires `pip install 'shingan[dynamic]'` (Frida + Xcode).
+> \* Dynamic analysis requires `pip install 'shingan[dynamic]'` (Frida).
 
 ---
 
 ## What it checks
 
 <details open>
-<summary><strong>iOS</strong> — IPA / .app / .xcarchive</summary>
+<summary><strong>iOS — static</strong> (IPA / .app / .xcarchive)</summary>
 
 | Rule ID | Category | What it detects |
 |---|---|---|
@@ -59,7 +59,18 @@ Visualize where your app is vulnerable to reverse engineering — before you shi
 </details>
 
 <details open>
-<summary><strong>Android</strong> — APK</summary>
+<summary><strong>iOS — dynamic</strong> (requires <code>shingan[dynamic]</code> + connected device)</summary>
+
+| Rule ID | What it tests |
+|---|---|
+| `IOS-DYN-001` | SSL pinning bypass via Frida — does pinning actually block a MITM? |
+| `IOS-DYN-002` | Jailbreak detection bypass via Frida — can detection be circumvented? |
+| `IOS-DYN-003` | `PT_DENY_ATTACH` effectiveness — does LLDB attach succeed? |
+
+</details>
+
+<details open>
+<summary><strong>Android — static</strong> (APK)</summary>
 
 | Rule ID | Category | What it detects |
 |---|---|---|
@@ -78,46 +89,23 @@ Visualize where your app is vulnerable to reverse engineering — before you shi
 
 </details>
 
-All findings are mapped to **[OWASP MASVS](https://mas.owasp.org/MASVS/)**.
-
-<details>
-<summary><strong>Dynamic checks (v1.2)</strong> — requires <code>pip install 'shingan[dynamic]'</code></summary>
+<details open>
+<summary><strong>Android — dynamic</strong> (requires <code>shingan[dynamic]</code> + connected device)</summary>
 
 | Rule ID | What it tests |
 |---|---|
-| `IOS-DYN-001` | SSL pinning bypass via Frida — does pinning actually block a MITM? |
-| `IOS-DYN-002` | Jailbreak detection bypass via Frida — can detection be circumvented? |
-| `IOS-DYN-003` | `PT_DENY_ATTACH` effectiveness — does LLDB attach succeed? |
-
-Outcomes: `bypassed` (HIGH) · `resistant` (INFO) · `unavailable` (INFO) · `error` (MEDIUM)
+| `AND-DYN-001` | SSL unpinning bypass via Frida — hooks OkHttp3, TrustManager, HostnameVerifier |
+| `AND-DYN-002` | Root detection bypass via Frida — hooks File.exists, Runtime.exec, Build.TAGS |
 
 </details>
+
+All findings are mapped to **[OWASP MASVS](https://mas.owasp.org/MASVS/)**.
+
+Dynamic outcomes: `bypassed` (HIGH) · `resistant` (INFO) · `unavailable` (INFO) · `error` (MEDIUM)
 
 ---
 
 ## Installation
-
-### Docker (recommended)
-
-```bash
-# Web UI
-docker run -p 8000:8000 -v shingan-data:/data ghcr.io/ykus4/shingan
-
-# CLI — mount a local directory containing your IPA/APK
-docker run --rm \
-  -v shingan-data:/data \
-  -v /path/to/artifacts:/artifacts:ro \
-  ghcr.io/ykus4/shingan \
-  uv run shingan scan /artifacts/MyApp.ipa
-```
-
-Or with docker compose:
-
-```bash
-# place .ipa / .apk files in ./artifacts/
-docker compose up
-# → http://localhost:8000
-```
 
 ### From source
 
@@ -130,7 +118,20 @@ uv sync
 
 # Enable dynamic analysis (Frida-based runtime checks)
 uv sync --extra dynamic
-# Also requires Xcode for lldb: xcode-select --install
+```
+
+### Docker
+
+```bash
+# Web UI
+docker run -p 8000:8000 -v shingan-data:/data ghcr.io/ykus4/shingan
+
+# CLI
+docker run --rm \
+  -v shingan-data:/data \
+  -v /path/to/artifacts:/artifacts:ro \
+  ghcr.io/ykus4/shingan \
+  uv run shingan scan /artifacts/MyApp.ipa
 ```
 
 ---
@@ -144,7 +145,7 @@ uv run shingan serve
 # → http://localhost:8000
 ```
 
-Drop an `.ipa`, `.app`, `.xcarchive`, or `.apk` onto the page. Results are stored locally and rendered as a dark-mode HTML report with diff highlighting.
+Drop an `.ipa`, `.app`, `.xcarchive`, or `.apk` onto the page. Results are stored locally and rendered as a dark/light-mode HTML report with diff highlighting.
 
 ---
 
@@ -158,23 +159,19 @@ uv run shingan scan MyApp.apk
 # Export formats
 uv run shingan scan MyApp.ipa --format html --out report.html --lang ja
 uv run shingan scan MyApp.apk --format sarif --out report.sarif
+uv run shingan export <scan_id> --format pdf  --out report.pdf
 
-# CI gate — exit 1 on high severity
+# CI gate — exit 1 on new high-severity findings
 uv run shingan scan MyApp.ipa --fail-on high
 
 # Diff against a previous scan
 uv run shingan scan MyApp.ipa --baseline <scan_id>
 
-# Dynamic analysis (requires shingan[dynamic])
+# Dynamic analysis (requires shingan[dynamic] + running app on device)
 uv run shingan devices                                    # list connected devices + simulators
-uv run shingan scan MyApp.ipa --dynamic                  # static + dynamic on USB device
+uv run shingan scan MyApp.ipa --dynamic                  # static + dynamic (iOS)
+uv run shingan scan MyApp.apk --dynamic                  # static + dynamic (Android)
 uv run shingan scan MyApp.ipa --dynamic --device <udid>  # target a specific device/simulator
-
-# Manage stored scans
-uv run shingan list
-uv run shingan diff <scan_id> <baseline_id>
-uv run shingan export <scan_id> --format html --out report.html
-uv run shingan export <scan_id> --format pdf  --out report.pdf
 ```
 
 ---
@@ -182,7 +179,6 @@ uv run shingan export <scan_id> --format pdf  --out report.pdf
 ### GitHub Actions
 
 ```yaml
-# Composite action (recommended)
 - uses: ykus4/shingan@v1
   with:
     ipa: build/MyApp.ipa
@@ -191,7 +187,7 @@ uv run shingan export <scan_id> --format pdf  --out report.pdf
 ```
 
 <details>
-<summary>Manual workflow (IPA or APK)</summary>
+<summary>Manual workflow</summary>
 
 ```yaml
 - name: Scan
@@ -230,7 +226,7 @@ end
 | `json` | Automation, custom dashboards |
 | `sarif` | GitHub Code Scanning (SARIF 2.1.0) |
 | `html` | Human review — self-contained dark/light-mode report, `--lang en\|ja` |
-| `pdf` | Shareable reports (requires `weasyprint`) |
+| `pdf` | Shareable reports |
 
 ---
 
@@ -244,22 +240,17 @@ scan A  ──►  scan B
               └── PERSISTED ← known issues carried over
 ```
 
-Run with `--baseline <scan_id>` to see the delta. New findings are highlighted in the HTML report. `--fail-on` in CI only triggers on genuinely new regressions.
+Run with `--baseline <scan_id>` to compare builds. `--fail-on` in CI only triggers on genuinely new regressions.
 
-Scan results are stored in `~/.shingan/shingan.db` (SQLite). Legacy JSON scans in `~/.shingan/scans/` are auto-migrated on first run.
+Scan results are stored in `~/.shingan/shingan.db` (SQLite).
 
 ---
 
 ## Suppression / allowlist
 
 ```bash
-# Suppress by rule ID
 uv run shingan suppress add IOS-SEC-002-entropy --reason "test fixture key"
-
-# Suppress a specific evidence match
 uv run shingan suppress add AND-SEC-002-aws_key --evidence-prefix AKIATEST --reason "CI test key"
-
-# List active suppressions
 uv run shingan suppress list
 ```
 
@@ -272,8 +263,6 @@ REST API: `POST /api/suppressions` · `GET /api/suppressions` · `DELETE /api/su
 Drop YAML files into `~/.shingan/rules/` to add project-specific checks:
 
 ```yaml
-# ~/.shingan/rules/my_checks.yaml
-
 - id: MYAPP-001
   title: "Internal staging URL leaked in binary"
   severity: high
@@ -287,12 +276,6 @@ Drop YAML files into `~/.shingan/rules/` to add project-specific checks:
       - "https://staging\\.internal\\.example\\.com"
 ```
 
-| `target` | What it scans |
-|---|---|
-| `binary` | String table of the main executable / native `.so` libraries |
-| `info_plist` | iOS `Info.plist` key-value tree |
-| `android_manifest` | Parsed `AndroidManifest.xml` attributes |
-
 Match types: `string` (substring), `regex`, `plist_key` (dot-path lookup).
 
 ---
@@ -301,9 +284,9 @@ Match types: `string` (substring), `regex`, `plist_key` (dot-path lookup).
 
 ```bash
 uv sync
-uv run pre-commit install   # ruff lint + format on commit
-uv run pytest               # full test suite
-uv run pytest -k test_ats   # run a single test
+uv run pre-commit install
+uv run pytest
+uv run pytest -k test_ats
 ```
 
 ---
