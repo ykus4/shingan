@@ -30,5 +30,5 @@ shingan = "shingan.cli:cli"
 dev = [
     "pre-commit>=4.6.0",
     "pytest>=9.0.3",
-    "ruff>=0.15.12",
+    "ruff>=0.15.15",
 ]
