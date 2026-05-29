@@ -46,7 +46,7 @@ jobs:
           sarif_file: shingan.sarif
 
       - name: Upload HTML report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: shingan-report
