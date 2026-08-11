@@ -28,7 +28,7 @@ shingan = "shingan.cli:cli"
 
 [dependency-groups]
 dev = [
-    "pre-commit>=4.6.0",
+    "pre-commit>=4.6.1",
     "pytest>=9.0.3",
     "ruff>=0.15.12",
 ]
