@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # binutils provides the `strings` command used for binary string extraction
 RUN apt-get update && apt-get install -y --no-install-recommends \
