@@ -12,6 +12,23 @@ from click.testing import CliRunner
 from shingan.cli import cli
 
 
+def _unwrapped(output: str) -> str:
+    """Join rich's soft-wrapped lines so substring assertions are terminal-width
+    independent. A long temp path can otherwise be split mid-token."""
+    return "".join(line.strip() for line in output.splitlines())
+
+
+@pytest.fixture(autouse=True)
+def _fixed_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the rendering width so assertions do not depend on the environment.
+
+    rich soft-wraps long paths and truncates table cells with an ellipsis based
+    on the detected width, so a narrow CI terminal could split "shingan.db" or
+    shorten "com.example.app" and fail an otherwise-correct assertion.
+    """
+    monkeypatch.setenv("COLUMNS", "200")
+
+
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
@@ -31,7 +48,7 @@ def test_importing_the_cli_creates_no_database(
 def test_version_option(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["--version"])
     assert result.exit_code == 0
-    assert "shingan" in result.output
+    assert "shingan" in _unwrapped(result.output)
 
 
 # ── scan ──────────────────────────────────────────────────────────────────────
@@ -103,9 +120,9 @@ def test_scan_saves_and_reports_the_db_path(runner: CliRunner, ipa_file: Path) -
     """The 'Saved → …' line used to print None."""
     result = runner.invoke(cli, ["scan", str(ipa_file)])
     assert result.exit_code == 0
-    assert "Saved scan" in result.output
+    assert "Saved scan" in _unwrapped(result.output)
     assert "None" not in result.output
-    assert "shingan.db" in result.output
+    assert "shingan.db" in _unwrapped(result.output)
 
 
 # ── --fail-on gate ────────────────────────────────────────────────────────────
@@ -165,14 +182,14 @@ def test_fail_on_accepts_info(runner: CliRunner, ipa_file: Path) -> None:
 def test_list_empty(runner: CliRunner) -> None:
     result = runner.invoke(cli, ["list"])
     assert result.exit_code == 0
-    assert "No scans found" in result.output
+    assert "No scans found" in _unwrapped(result.output)
 
 
 def test_list_after_scan(runner: CliRunner, ipa_file: Path) -> None:
     runner.invoke(cli, ["scan", str(ipa_file)])
     result = runner.invoke(cli, ["list"])
     assert result.exit_code == 0
-    assert "com.example.app" in result.output
+    assert "com.example.app" in _unwrapped(result.output)
 
 
 def test_export_unknown_scan(runner: CliRunner, tmp_path: Path) -> None:
@@ -180,7 +197,7 @@ def test_export_unknown_scan(runner: CliRunner, tmp_path: Path) -> None:
         cli, ["export", "does-not-exist", "--out", str(tmp_path / "o.json")]
     )
     assert result.exit_code == 1
-    assert "not found" in result.output.lower()
+    assert "not found" in _unwrapped(result.output).lower()
 
 
 def test_export_roundtrip(runner: CliRunner, ipa_file: Path, tmp_path: Path) -> None:
@@ -220,7 +237,7 @@ def test_diff_identical_scans(runner: CliRunner, ipa_file: Path) -> None:
     result = runner.invoke(cli, ["diff", a["scan_id"], b["scan_id"]])
 
     assert result.exit_code == 0
-    assert "persisted" in result.output
+    assert "persisted" in _unwrapped(result.output)
 
 
 def test_scan_with_missing_baseline_warns(runner: CliRunner, ipa_file: Path) -> None:
@@ -238,4 +255,4 @@ def test_suppress_list_without_server(runner: CliRunner) -> None:
     """Points the user at `shingan serve` rather than dumping a traceback."""
     result = runner.invoke(cli, ["suppress", "list", "--url", "http://127.0.0.1:9"])
     assert result.exit_code == 1
-    assert "shingan serve" in result.output
+    assert "shingan serve" in _unwrapped(result.output)
