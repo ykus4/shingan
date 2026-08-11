@@ -51,8 +51,9 @@ class DynamicContext:
         if self._session:
             try:
                 self._session.detach()
-            except Exception:
-                pass
+            except Exception as exc:
+                # Detach is best-effort: the process may already be gone.
+                logger.debug("frida session detach failed: %s", exc)
             self._session = None
 
     def __enter__(self) -> DynamicContext:

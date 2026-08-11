@@ -10,12 +10,22 @@ Checks:
 from __future__ import annotations
 
 import logging
-import xml.etree.ElementTree as ET
+from pathlib import Path
+from xml.etree.ElementTree import Element, ParseError
+
+# network_security_config.xml comes from the APK under analysis, i.e. untrusted
+# input. The stdlib ElementTree expands internal entities, so a crafted config
+# can trigger exponential entity expansion ("billion laughs"). defusedxml
+# refuses DTDs and entity declarations outright.
+from defusedxml.ElementTree import parse as safe_xml_parse
 
 from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
 
 logger = logging.getLogger(__name__)
+
+#: Resource reference prefix used by `android:networkSecurityConfig`.
+_XML_RES_PREFIX = "@xml/"
 
 
 def check(ctx: AndroidCheckContext) -> list[Finding]:
@@ -121,36 +131,49 @@ def check(ctx: AndroidCheckContext) -> list[Finding]:
     return findings
 
 
-def _load_network_security_config(ctx: AndroidCheckContext) -> ET.Element | None:
+def _parse_xml(path: Path) -> Element | None:
+    """Safely parse an XML resource from the APK, or None if it is unusable."""
+    try:
+        return safe_xml_parse(path).getroot()
+    except (ParseError, OSError, ValueError) as exc:
+        # defusedxml raises its own ValueError subclasses (EntitiesForbidden,
+        # DTDForbidden) for hostile documents.
+        logger.debug("Failed to parse XML resource %s: %s", path, exc)
+        return None
+
+
+def _load_network_security_config(ctx: AndroidCheckContext) -> Element | None:
     """Parse network_security_config.xml from the extracted APK work directory."""
-    # Try common locations
-    candidates = [
-        ctx.work_dir / "res" / "xml" / "network_security_config.xml",
-        ctx.work_dir / "res" / "xml" / "network_security_config.XML",
-    ]
-    for path in candidates:
+    res_xml_dir = ctx.work_dir / "res" / "xml"
+
+    for path in (
+        res_xml_dir / "network_security_config.xml",
+        res_xml_dir / "network_security_config.XML",
+    ):
         if path.exists():
-            try:
-                return ET.parse(path).getroot()
-            except ET.ParseError as exc:
-                logger.debug("Failed to parse network_security_config.xml: %s", exc)
-                return None
+            return _parse_xml(path)
 
-    # Also check if manifest references an NSC (the file may have a different name)
+    # The manifest may point at a config under a different name.
     apk = ctx.apk
-    if apk is not None:
-        try:
-            nsc_ref = apk.get_attribute_value("application", "networkSecurityConfig")
-            if nsc_ref:
-                # nsc_ref is like "@xml/network_security_config"
-                res_name = nsc_ref.lstrip("@xml/").lstrip("@")
-                for res_dir in (ctx.work_dir / "res" / "xml").glob("*.xml"):
-                    if res_dir.stem == res_name:
-                        try:
-                            return ET.parse(res_dir).getroot()
-                        except ET.ParseError:
-                            return None
-        except Exception:
-            pass
+    if apk is None:
+        return None
 
+    try:
+        nsc_ref = apk.get_attribute_value("application", "networkSecurityConfig")
+    except Exception as exc:
+        logger.debug("Could not read networkSecurityConfig attribute: %s", exc)
+        return None
+
+    if not nsc_ref:
+        return None
+
+    # str.lstrip() strips *characters*, not a prefix: lstrip("@xml/") turned
+    # "@xml/my_config" into "y_config", so configs whose names began with any of
+    # @, x, m, l or / were never found.
+    res_name = nsc_ref.removeprefix(_XML_RES_PREFIX).removeprefix("@")
+    for candidate in sorted(res_xml_dir.glob("*.xml")):
+        if candidate.stem == res_name:
+            return _parse_xml(candidate)
+
+    logger.debug("Manifest references %s but no matching XML resource found", nsc_ref)
     return None

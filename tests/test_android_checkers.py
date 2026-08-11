@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from shingan.core.context import AndroidCheckContext
 from shingan.core.checkers.android import (
     crypto,
     debug_flags,
@@ -15,8 +14,8 @@ from shingan.core.checkers.android import (
     sbom,
     signing,
 )
+from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Severity
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -48,7 +47,7 @@ def _make_apk_mock(**attrs) -> MagicMock:
     apk.get_target_sdk_version.return_value = attrs.get("target_sdk", "34")
     apk.get_permissions.return_value = attrs.get("permissions", [])
     apk.get_certificates.return_value = attrs.get("certificates", [MagicMock()])
-    apk.get_attribute_value.return_value = attrs.get("attribute_value", None)
+    apk.get_attribute_value.return_value = attrs.get("attribute_value")
     apk.get_android_manifest_xml.return_value = None
     return apk
 

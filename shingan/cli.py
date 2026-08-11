@@ -1,46 +1,74 @@
-"""shingan CLI — scan IPA files from the terminal / CI/CD."""
+"""shingan CLI — scan IPA/APK files from the terminal / CI/CD."""
 
 from __future__ import annotations
 
+import json
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
+from typing import NoReturn
 
 import click
+from rich import box
 from rich.console import Console
 from rich.table import Table
-from rich import box
 
 from shingan.core.analyzer import analyze
-from shingan.core.diff import compare
-from shingan.core.models import Severity
-from shingan.core.report import to_html, to_json, to_pdf, to_sarif
+from shingan.core.constants import (
+    DEFAULT_SERVE_HOST,
+    DEFAULT_SERVE_PORT,
+    HTTP_TIMEOUT,
+)
+from shingan.core.diff import DiffResult, compare
+from shingan.core.models import SEVERITY_ORDER, ScanResult, Severity
+from shingan.core.report import to_html, to_json, to_pdf, to_sarif, to_text
 from shingan.core.storage import ScanStore
+from shingan.core.version import get_version
 
 console = Console(stderr=True)
-store = ScanStore()
 
-SEVERITY_COLOR = {
-    "high": "red",
-    "medium": "yellow",
-    "low": "green",
-    "info": "cyan",
-}
+#: Severity values accepted by --fail-on, most severe first.
+_FAIL_ON_CHOICES = [s.value for s in SEVERITY_ORDER] + ["none"]
 
-SEVERITY_ORDER = {
-    Severity.HIGH: 0,
-    Severity.MEDIUM: 1,
-    Severity.LOW: 2,
-    Severity.INFO: 3,
-}
+_DEFAULT_SERVER_URL = f"http://{DEFAULT_SERVE_HOST}:{DEFAULT_SERVE_PORT}"
+
+# Exit codes
+EXIT_FINDINGS = 1  # --fail-on threshold met
+EXIT_ERROR = 2  # scan could not be completed
+
+
+def get_store() -> ScanStore:
+    """Open the scan store.
+
+    Constructed on demand rather than at import time: instantiating it at module
+    level created ``~/.shingan/shingan.db`` as a side effect of merely importing
+    the CLI, which made the module impossible to import in tests without
+    touching the user's home directory.
+    """
+    return ScanStore()
+
+
+def _fail(message: str, code: int = EXIT_ERROR) -> NoReturn:
+    console.print(f"[red]Error:[/red] {message}")
+    sys.exit(code)
 
 
 @click.group()
-def cli():
+@click.version_option(version=get_version(), prog_name="shingan")
+def cli() -> None:
     """shingan — iOS/Android 解析耐性チェッカー"""
 
 
 @cli.command()
-@click.argument("artifact", type=click.Path(exists=True, dir_okay=False))
+@click.argument(
+    "artifact",
+    # .app and .xcarchive inputs are directories, which ingest() accepts; the
+    # previous dir_okay=False rejected them before analysis could start.
+    type=click.Path(exists=True, dir_okay=True, file_okay=True, path_type=Path),
+)
 @click.option(
     "--format",
     "fmt",
@@ -50,14 +78,14 @@ def cli():
 )
 @click.option(
     "--out",
-    type=click.Path(),
+    type=click.Path(path_type=Path),
     default=None,
     help="Output file path (stdout if omitted)",
 )
 @click.option(
     "--fail-on",
     "fail_on",
-    type=click.Choice(["high", "medium", "low", "none"]),
+    type=click.Choice(_FAIL_ON_CHOICES),
     default="none",
     show_default=True,
     help="Exit 1 if any finding at this severity or above",
@@ -75,6 +103,12 @@ def cli():
     default="en",
     show_default=True,
     help="Report language (HTML only)",
+)
+@click.option(
+    "--rules-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Custom YAML rules directory (default: ~/.shingan/rules)",
 )
 @click.option(
     "--dynamic/--no-dynamic",
@@ -96,90 +130,96 @@ def cli():
     help="Per-check timeout for dynamic analysis (seconds)",
 )
 def scan(
-    artifact: str,
+    artifact: Path,
     fmt: str,
-    out: str | None,
+    out: Path | None,
     fail_on: str,
     save: bool,
     baseline: str | None,
     lang: str,
+    rules_dir: Path | None,
     dynamic: bool,
     device_udid: str | None,
     dynamic_timeout: int,
-):
+) -> None:
     """Scan an IPA or APK file for reverse-engineering vulnerabilities."""
-    ipa_path = Path(artifact)
-    console.print(f"[cyan]shingan[/cyan] scanning [bold]{ipa_path.name}[/bold] …")
+    console.print(f"[cyan]shingan[/cyan] scanning [bold]{artifact.name}[/bold] …")
 
     try:
         result = analyze(
-            ipa_path,
+            artifact,
+            custom_rules_dir=rules_dir,
             dynamic=dynamic,
             device_udid=device_udid,
             dynamic_timeout=dynamic_timeout,
         )
-    except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(2)
+    except (FileNotFoundError, ValueError, ImportError) as exc:
+        _fail(str(exc))
 
+    store = get_store()
     if save:
-        saved_path = store.save(result)
-        console.print(f"[dim]Saved → {saved_path}[/dim]")
+        db_path = store.save(result)
+        console.print(f"[dim]Saved scan {result.scan_id[:8]} → {db_path}[/dim]")
 
-    # Diff
-    diff = None
-    if baseline:
-        try:
-            base_result = store.load(baseline)
-            diff = compare(base_result, result)
-            console.print(
-                f"[dim]Diff vs baseline {baseline[:8]}: "
-                f"[green]+{len(diff.new)} new[/green]  "
-                f"[red]-{len(diff.fixed)} fixed[/red]  "
-                f"{len(diff.persisted)} persisted[/dim]"
-            )
-        except FileNotFoundError:
-            console.print(
-                f"[yellow]Warning:[/yellow] baseline scan {baseline} not found, skipping diff"
-            )
-
-    # Output
+    diff = _load_diff(store, baseline, result)
     output_text = _render(result, fmt, diff=diff, lang=lang)
 
     if out:
-        Path(out).write_text(output_text, encoding="utf-8")
+        out.write_text(output_text, encoding="utf-8")
         console.print(f"[dim]Report → {out}[/dim]")
     elif fmt != "text":
         click.echo(output_text)
 
-    # Summary table (always to stderr)
+    # Summary table always goes to stderr so it never pollutes piped output.
     if fmt == "text":
         _print_table(result)
 
-    # Fail-on gate
-    if fail_on != "none":
-        threshold = Severity(fail_on)
-        threshold_order = SEVERITY_ORDER[threshold]
-        violations = [
-            f for f in result.findings if SEVERITY_ORDER[f.severity] <= threshold_order
-        ]
-        if violations:
-            console.print(
-                f"\n[red]FAIL[/red] — {len(violations)} finding(s) at severity "
-                f"[bold]{fail_on}[/bold] or above"
-            )
-            sys.exit(1)
-        else:
-            console.print(
-                f"\n[green]PASS[/green] — no findings at severity [bold]{fail_on}[/bold] or above"
-            )
+    _apply_fail_gate(result, fail_on)
+
+
+def _load_diff(
+    store: ScanStore, baseline: str | None, result: ScanResult
+) -> DiffResult | None:
+    if not baseline:
+        return None
+    try:
+        base_result = store.load(baseline)
+    except FileNotFoundError:
+        console.print(
+            f"[yellow]Warning:[/yellow] baseline scan {baseline} not found, skipping diff"
+        )
+        return None
+    diff = compare(base_result, result)
+    console.print(
+        f"[dim]Diff vs baseline {baseline[:8]}: "
+        f"[green]+{len(diff.new)} new[/green]  "
+        f"[red]-{len(diff.fixed)} fixed[/red]  "
+        f"{len(diff.persisted)} persisted[/dim]"
+    )
+    return diff
+
+
+def _apply_fail_gate(result: ScanResult, fail_on: str) -> None:
+    if fail_on == "none":
+        return
+    threshold = Severity(fail_on)
+    violations = [f for f in result.findings if f.severity.at_least(threshold)]
+    if violations:
+        console.print(
+            f"\n[red]FAIL[/red] — {len(violations)} finding(s) at severity "
+            f"[bold]{fail_on}[/bold] or above"
+        )
+        sys.exit(EXIT_FINDINGS)
+    console.print(
+        f"\n[green]PASS[/green] — no findings at severity [bold]{fail_on}[/bold] or above"
+    )
 
 
 @cli.command("list")
 @click.option("--app-id", default=None, help="Filter by bundle ID")
-def list_scans(app_id: str | None):
+def list_scans(app_id: str | None) -> None:
     """List stored scan results."""
-    scans = store.list_scans(app_id=app_id)
+    scans = get_store().list_scans(app_id=app_id)
     if not scans:
         console.print("[dim]No scans found.[/dim]")
         return
@@ -187,6 +227,7 @@ def list_scans(app_id: str | None):
     table.add_column("Scan ID", style="dim", width=10)
     table.add_column("App ID")
     table.add_column("Version")
+    table.add_column("C", style="bright_red", justify="right")
     table.add_column("H", style="red", justify="right")
     table.add_column("M", style="yellow", justify="right")
     table.add_column("L", style="green", justify="right")
@@ -194,12 +235,13 @@ def list_scans(app_id: str | None):
     for s in scans:
         summary = s.get("summary", {})
         table.add_row(
-            s["scan_id"][:8],
+            (s.get("scan_id") or "")[:8],
             s.get("app_id", ""),
             f"{s.get('app_version', '')} ({s.get('build', '')})",
-            str(summary.get("high", 0)),
-            str(summary.get("medium", 0)),
-            str(summary.get("low", 0)),
+            str(summary.get(Severity.CRITICAL.value, 0)),
+            str(summary.get(Severity.HIGH.value, 0)),
+            str(summary.get(Severity.MEDIUM.value, 0)),
+            str(summary.get(Severity.LOW.value, 0)),
             (s.get("scanned_at") or "")[:19].replace("T", " "),
         )
     console.print(table)
@@ -208,32 +250,30 @@ def list_scans(app_id: str | None):
 @cli.command()
 @click.argument("scan_id")
 @click.argument("baseline_id")
-def diff(scan_id: str, baseline_id: str):
+def diff(scan_id: str, baseline_id: str) -> None:
     """Show diff between two stored scans."""
+    store = get_store()
     try:
         current = store.load(scan_id)
         baseline = store.load(baseline_id)
-    except FileNotFoundError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
+    except FileNotFoundError as exc:
+        _fail(str(exc), EXIT_FINDINGS)
 
-    d = compare(baseline, current)
+    result = compare(baseline, current)
 
-    if d.new:
-        console.print(f"\n[green bold]NEW ({len(d.new)})[/green bold]")
-        for f in d.new:
-            console.print(
-                f"  [{SEVERITY_COLOR[f.severity.value]}]{f.severity.value.upper()}[/{SEVERITY_COLOR[f.severity.value]}]  {f.rule_id}  {f.title}"
-            )
+    for label, style, findings in (
+        ("NEW", "green bold", result.new),
+        ("FIXED", "red bold", result.fixed),
+    ):
+        if not findings:
+            continue
+        console.print(f"\n[{style}]{label} ({len(findings)})[/{style}]")
+        for f in sorted(findings, key=lambda x: x.severity.rank):
+            console.print(f"  {_severity_tag(f.severity)}  {f.rule_id}  {f.title}")
 
-    if d.fixed:
-        console.print(f"\n[red bold]FIXED ({len(d.fixed)})[/red bold]")
-        for f in d.fixed:
-            console.print(
-                f"  [{SEVERITY_COLOR[f.severity.value]}]{f.severity.value.upper()}[/{SEVERITY_COLOR[f.severity.value]}]  {f.rule_id}  {f.title}"
-            )
-
-    console.print(f"\n[dim]{len(d.persisted)} finding(s) persisted from baseline[/dim]")
+    console.print(
+        f"\n[dim]{len(result.persisted)} finding(s) persisted from baseline[/dim]"
+    )
 
 
 @cli.command()
@@ -241,10 +281,11 @@ def diff(scan_id: str, baseline_id: str):
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["json", "sarif", "html", "pdf"]),
+    type=click.Choice(["text", "json", "sarif", "html", "pdf"]),
     default="json",
+    show_default=True,
 )
-@click.option("--out", type=click.Path(), required=True)
+@click.option("--out", type=click.Path(path_type=Path), required=True)
 @click.option(
     "--lang",
     type=click.Choice(["en", "ja"]),
@@ -252,36 +293,32 @@ def diff(scan_id: str, baseline_id: str):
     show_default=True,
     help="Report language (HTML/PDF only)",
 )
-def export(scan_id: str, fmt: str, out: str, lang: str):
+def export(scan_id: str, fmt: str, out: Path, lang: str) -> None:
     """Export a stored scan result."""
     try:
-        result = store.load(scan_id)
+        result = get_store().load(scan_id)
     except FileNotFoundError:
-        console.print(f"[red]Scan not found:[/red] {scan_id}")
-        sys.exit(1)
+        _fail(f"Scan not found: {scan_id}", EXIT_FINDINGS)
+
     if fmt == "pdf":
         try:
-            pdf_bytes = to_pdf(result, lang=lang)
-            Path(out).write_bytes(pdf_bytes)
-        except RuntimeError as e:
-            console.print(f"[red]Error:[/red] {e}")
-            sys.exit(1)
+            out.write_bytes(to_pdf(result, lang=lang))
+        except RuntimeError as exc:
+            _fail(str(exc), EXIT_FINDINGS)
     else:
-        text = _render(result, fmt, lang=lang)
-        Path(out).write_text(text, encoding="utf-8")
+        out.write_text(_render(result, fmt, lang=lang), encoding="utf-8")
     console.print(f"[dim]Exported → {out}[/dim]")
 
 
 @cli.command("devices")
-def list_devices_cmd():
+def list_devices_cmd() -> None:
     """List available devices and simulators for dynamic analysis."""
-    from shingan.core.dynamic.device import list_devices, _list_simulators_via_xcrun
+    from shingan.core.dynamic.device import list_devices
 
-    try:
-        devices = list_devices()
-    except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
-        devices = _list_simulators_via_xcrun()
+    # list_devices() already aggregates frida, xcrun and adb and is documented
+    # never to raise, so the previous try/except + xcrun fallback here could
+    # not trigger and duplicated work list_devices() already does.
+    devices = list_devices()
 
     if not devices:
         console.print(
@@ -307,17 +344,92 @@ def list_devices_cmd():
 
 
 @cli.command()
-def serve():
+@click.option(
+    "--host",
+    default=DEFAULT_SERVE_HOST,
+    show_default=True,
+    help="Bind address. Defaults to loopback because the API is unauthenticated "
+    "unless SHINGAN_API_KEY is set.",
+)
+@click.option(
+    "--port", default=DEFAULT_SERVE_PORT, show_default=True, type=int, help="Bind port"
+)
+@click.option("--reload", is_flag=True, default=False, help="Enable auto-reload (dev)")
+def serve(host: str, port: int, reload: bool) -> None:
     """Start the web UI."""
     import uvicorn
 
-    console.print("[cyan]shingan[/cyan] web UI → [bold]http://localhost:8000[/bold]")
-    uvicorn.run("shingan.web.main:app", host="0.0.0.0", port=8000, reload=False)
+    console.print(f"[cyan]shingan[/cyan] web UI → [bold]http://{host}:{port}[/bold]")
+    uvicorn.run("shingan.web.main:app", host=host, port=port, reload=reload)
+
+
+# ── Suppression commands ──────────────────────────────────────────────────────
+
+_url_option = click.option(
+    "--url",
+    default=_DEFAULT_SERVER_URL,
+    show_default=True,
+    help="shingan server URL",
+)
 
 
 @cli.group()
-def suppress():
+def suppress() -> None:
     """Manage suppression rules (requires `shingan serve` to be running)."""
+
+
+def _api_request(
+    url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    payload: dict | None = None,
+) -> object:
+    """Call the shingan server API, exiting with a helpful message on failure.
+
+    Shared by the three suppress subcommands, which each had their own copy of
+    this request/error-handling block.
+    """
+    data = json.dumps(payload).encode() if payload is not None else None
+    headers = {"Content-Type": "application/json"} if data else {}
+    # S310: the URL is the operator-supplied --url for their own shingan
+    # server (loopback by default), not attacker-controlled input.
+    request = urllib.request.Request(  # noqa: S310
+        f"{url.rstrip('/')}{path}", data=data, method=method, headers=headers
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as resp:  # noqa: S310
+            body = resp.read()
+    except urllib.error.HTTPError as exc:
+        _fail(f"HTTP {exc.code}: {exc.read().decode(errors='replace')}", EXIT_FINDINGS)
+    except urllib.error.URLError as exc:
+        _fail(
+            f"{exc.reason}\n[dim]Is `shingan serve` running at {url}?[/dim]",
+            EXIT_FINDINGS,
+        )
+    return json.loads(body) if body else None
+
+
+def _api_dict(url: str, path: str, **kwargs: object) -> dict:
+    """API call that must return a JSON object."""
+    data = _api_request(url, path, **kwargs)  # type: ignore[arg-type]
+    if not isinstance(data, dict):
+        _fail(
+            f"Unexpected response from {path}: expected an object, got {type(data).__name__}"
+        )
+    return data
+
+
+def _api_list(url: str, path: str, **kwargs: object) -> list:
+    """API call that must return a JSON array."""
+    data = _api_request(url, path, **kwargs)  # type: ignore[arg-type]
+    if data is None:
+        return []
+    if not isinstance(data, list):
+        _fail(
+            f"Unexpected response from {path}: expected an array, got {type(data).__name__}"
+        )
+    return data
 
 
 @suppress.command("add")
@@ -328,61 +440,27 @@ def suppress():
     help="Narrow suppression to a specific evidence prefix",
 )
 @click.option("--reason", default="", help="Reason for suppression")
-@click.option(
-    "--url",
-    default="http://localhost:8000",
-    show_default=True,
-    help="shingan server URL",
-)
-def suppress_add(rule_id: str, evidence_prefix: str, reason: str, url: str):
+@_url_option
+def suppress_add(rule_id: str, evidence_prefix: str, reason: str, url: str) -> None:
     """Add a suppression rule via the running web server."""
-    import json
-    import urllib.error
-    import urllib.request
-
-    payload = json.dumps(
-        {"rule_id": rule_id, "evidence_prefix": evidence_prefix, "reason": reason}
-    ).encode()
-    req = urllib.request.Request(
-        f"{url}/api/suppressions",
-        data=payload,
+    data = _api_dict(
+        url,
+        "/api/suppressions",
         method="POST",
-        headers={"Content-Type": "application/json"},
+        payload={
+            "rule_id": rule_id,
+            "evidence_prefix": evidence_prefix,
+            "reason": reason,
+        },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        console.print(f"[green]Suppression added:[/green] {data['rule_id']}")
-    except urllib.error.HTTPError as e:
-        console.print(f"[red]HTTP {e.code}:[/red] {e.read().decode()}")
-        sys.exit(1)
-    except Exception as e:
-        console.print(
-            f"[red]Error:[/red] {e}\n[dim]Is `shingan serve` running at {url}?[/dim]"
-        )
-        sys.exit(1)
+    console.print(f"[green]Suppression added:[/green] {data['rule_id']}")
 
 
 @suppress.command("list")
-@click.option(
-    "--url",
-    default="http://localhost:8000",
-    show_default=True,
-    help="shingan server URL",
-)
-def suppress_list(url: str):
+@_url_option
+def suppress_list(url: str) -> None:
     """List all active suppression rules."""
-    import json
-    import urllib.request
-
-    try:
-        with urllib.request.urlopen(f"{url}/api/suppressions", timeout=10) as resp:
-            items = json.loads(resp.read())
-    except Exception as e:
-        console.print(
-            f"[red]Error:[/red] {e}\n[dim]Is `shingan serve` running at {url}?[/dim]"
-        )
-        sys.exit(1)
+    items = _api_list(url, "/api/suppressions")
     if not items:
         console.print("[dim]No suppressions.[/dim]")
         return
@@ -398,30 +476,31 @@ def suppress_list(url: str):
 @suppress.command("remove")
 @click.argument("rule_id")
 @click.option("--evidence-prefix", default="", help="Evidence prefix to match")
-@click.option("--url", default="http://localhost:8000", show_default=True)
-def suppress_remove(rule_id: str, evidence_prefix: str, url: str):
+@_url_option
+def suppress_remove(rule_id: str, evidence_prefix: str, url: str) -> None:
     """Remove a suppression rule."""
-    import json
-    import urllib.parse
-    import urllib.request
-
-    params = f"rule_id={urllib.parse.quote(rule_id)}"
+    params = {"rule_id": rule_id}
     if evidence_prefix:
-        params += f"&evidence_prefix={urllib.parse.quote(evidence_prefix)}"
-    req = urllib.request.Request(f"{url}/api/suppressions?{params}", method="DELETE")
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        console.print(f"[green]Removed:[/green] {data['removed']} suppression(s)")
-    except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
-        sys.exit(1)
+        params["evidence_prefix"] = evidence_prefix
+    query = urllib.parse.urlencode(params)
+    data = _api_dict(url, f"/api/suppressions?{query}", method="DELETE")
+    console.print(f"[green]Removed:[/green] {data['removed']} suppression(s)")
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
-def _render(result, fmt: str, diff=None, lang: str = "en") -> str:
+def _severity_tag(severity: Severity) -> str:
+    """Rich-markup severity label, coloured from the single mapping in models."""
+    return f"[{severity.color}]{severity.value.upper()}[/{severity.color}]"
+
+
+def _render(
+    result: ScanResult,
+    fmt: str,
+    diff: DiffResult | None = None,
+    lang: str = "en",
+) -> str:
     if fmt == "json":
         return to_json(result)
     if fmt == "sarif":
@@ -433,30 +512,27 @@ def _render(result, fmt: str, diff=None, lang: str = "en") -> str:
             diff_fixed=diff.fixed_fingerprints if diff else None,
             lang=lang,
         )
-    return ""
+    return to_text(result)
 
 
-def _print_table(result):
+def _summary_cells(summary: dict) -> Iterator[str]:
+    for severity in SEVERITY_ORDER:
+        count = summary.get(severity.value, 0)
+        if severity is Severity.INFO or count:
+            yield f"[{severity.color}]{count} {severity.value}[/{severity.color}]"
+
+
+def _print_table(result: ScanResult) -> None:
     summary = result.to_dict()["summary"]
     console.print(
-        f"\n[bold]{result.ipa_name}[/bold]  "
+        f"\n[bold]{result.artifact_name}[/bold]  "
         f"{result.app_id} {result.app_version} ({result.build})"
     )
     table = Table(box=box.SIMPLE_HEAD, show_header=True, header_style="bold")
-    table.add_column("Severity", width=8)
+    table.add_column("Severity", width=9)
     table.add_column("Rule ID", width=18)
     table.add_column("Title")
-    for f in sorted(result.findings, key=lambda x: SEVERITY_ORDER[x.severity]):
-        color = SEVERITY_COLOR[f.severity.value]
-        table.add_row(
-            f"[{color}]{f.severity.value.upper()}[/{color}]",
-            f.rule_id,
-            f.title,
-        )
+    for f in sorted(result.findings, key=lambda x: x.severity.rank):
+        table.add_row(_severity_tag(f.severity), f.rule_id, f.title)
     console.print(table)
-    console.print(
-        f"[bold red]{summary['high']} high[/bold red]  "
-        f"[bold yellow]{summary['medium']} medium[/bold yellow]  "
-        f"[bold green]{summary['low']} low[/bold green]  "
-        f"[cyan]{summary['info']} info[/cyan]"
-    )
+    console.print("  ".join(_summary_cells(summary)))

@@ -7,8 +7,12 @@ Checks:
 
 from __future__ import annotations
 
+import logging
+
 from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
+
+logger = logging.getLogger(__name__)
 
 _DEBUG_LOG_INDICATORS = (
     "Log.d(",
@@ -47,8 +51,8 @@ def check(ctx: AndroidCheckContext) -> list[Finding]:
                         masvs="MASVS-RESILIENCE-2",
                     )
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Debug flag inspection failed: %s", exc)
 
     # AND-DBG-004b: debug log calls in DEX strings
     debug_hits = [

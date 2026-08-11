@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from shingan.core.constants import LSA_SCHEMES_THRESHOLD
+from shingan.core.constants import (
+    LSA_SCHEMES_EVIDENCE_SAMPLE,
+    LSA_SCHEMES_THRESHOLD,
+)
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
 
 
-def check(info_plist: dict) -> list[Finding]:
+def check(ctx: CheckContext) -> list[Finding]:
+    """Uniform checker entry point — see :func:`check_plist` for the logic."""
+    return check_plist(ctx.info_plist)
+
+
+def check_plist(info_plist: dict) -> list[Finding]:
     findings: list[Finding] = []
 
     ats = info_plist.get("NSAppTransportSecurity", {})
@@ -132,7 +141,7 @@ def check(info_plist: dict) -> list[Finding]:
                     "A large number of queried URL schemes may expose information about "
                     "installed apps and could be used for fingerprinting."
                 ),
-                evidence=", ".join(schemes[:15]),
+                evidence=", ".join(schemes[:LSA_SCHEMES_EVIDENCE_SAMPLE]),
                 recommendation="Remove schemes that are not actively used by the app.",
                 masvs="MASVS-NETWORK-1",
             )

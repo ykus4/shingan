@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 from dataclasses import dataclass
 
+from shingan.core.shell import run_command
+
 logger = logging.getLogger(__name__)
+
+#: Timeout for quick device-enumeration commands (seconds).
+_ENUMERATION_TIMEOUT = 10
+
+#: Timeout for a single `adb shell getprop` call (seconds).
+_GETPROP_TIMEOUT = 5
 
 
 @dataclass
@@ -51,8 +58,8 @@ def _list_via_frida() -> list[DeviceInfo]:
             try:
                 params = dev.query_system_parameters()
                 os_ver = params.get("os", {}).get("version", "unknown")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not query OS version for %s: %s", dev.id, exc)
             result.append(
                 DeviceInfo(udid=dev.id, name=dev.name, kind=dev.type, os_version=os_ver)
             )
@@ -66,18 +73,13 @@ def _list_via_frida() -> list[DeviceInfo]:
 
 def _list_emulators_via_adb() -> list[DeviceInfo]:
     """Parse `adb devices -l` for connected Android devices and emulators."""
+    result_cmd = run_command(["adb", "devices", "-l"], timeout=_ENUMERATION_TIMEOUT)
+    if not result_cmd.ok:
+        return []
     try:
-        proc = subprocess.run(
-            ["adb", "devices", "-l"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if proc.returncode != 0:
-            return []
         result = []
-        for line in proc.stdout.splitlines()[1:]:  # skip "List of devices attached"
-            line = line.strip()
+        for raw_line in result_cmd.lines()[1:]:  # skip "List of devices attached"
+            line = raw_line.strip()
             if not line or "offline" in line:
                 continue
             parts = line.split()
@@ -106,39 +108,27 @@ def _list_emulators_via_adb() -> list[DeviceInfo]:
 
 def _adb_get_prop(serial: str, prop: str) -> str:
     """Return an Android system property via adb shell getprop."""
-    try:
-        proc = subprocess.run(
-            ["adb", "-s", serial, "shell", "getprop", prop],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return proc.stdout.strip()
-    except Exception:
-        return ""
+    result = run_command(
+        ["adb", "-s", serial, "shell", "getprop", prop], timeout=_GETPROP_TIMEOUT
+    )
+    return result.stdout.strip() if result.ok else ""
 
 
 def _list_simulators_via_xcrun() -> list[DeviceInfo]:
     """Parse `xcrun simctl list devices --json` for booted simulators."""
+    proc = run_command(
+        ["xcrun", "simctl", "list", "devices", "--json"], timeout=_ENUMERATION_TIMEOUT
+    )
+    if not proc.ok:
+        return []
     try:
-        proc = subprocess.run(
-            ["xcrun", "simctl", "list", "devices", "--json"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if proc.returncode != 0:
-            return []
         data = json.loads(proc.stdout)
         result = []
         for runtime_key, sims in data.get("devices", {}).items():
             # e.g. "com.apple.CoreSimulator.SimRuntime.iOS-17-4" → "iOS 17.4"
             suffix = runtime_key.split(".")[-1]  # "iOS-17-4"
             parts = suffix.split("-")
-            if len(parts) >= 3:
-                os_ver = f"{parts[0]} {'.'.join(parts[1:])}"
-            else:
-                os_ver = suffix
+            os_ver = f"{parts[0]} {'.'.join(parts[1:])}" if len(parts) >= 3 else suffix
             for sim in sims:
                 if sim.get("state") != "Booted":
                     continue

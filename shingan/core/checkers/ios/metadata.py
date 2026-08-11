@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from shingan.core.constants import URL_SCHEME_TITLE_SAMPLE
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
 
 # Background modes that warrant attention in security-sensitive apps
@@ -55,7 +57,12 @@ SENSITIVE_USAGE_KEYS: list[tuple[str, str]] = [
 ]
 
 
-def check(info_plist: dict) -> list[Finding]:
+def check(ctx: CheckContext) -> list[Finding]:
+    """Uniform checker entry point — see :func:`check_plist` for the logic."""
+    return check_plist(ctx.info_plist)
+
+
+def check_plist(info_plist: dict) -> list[Finding]:
     findings: list[Finding] = []
 
     # --- 1. Background modes ---
@@ -136,7 +143,10 @@ def check(info_plist: dict) -> list[Finding]:
         findings.append(
             Finding(
                 rule_id="IOS-URL-018a",
-                title=f"Custom URL scheme(s) registered: {', '.join(custom_schemes[:5])}",
+                title=(
+                    "Custom URL scheme(s) registered: "
+                    f"{', '.join(custom_schemes[:URL_SCHEME_TITLE_SAMPLE])}"
+                ),
                 severity=Severity.LOW,
                 description=(
                     f"The app registers {len(custom_schemes)} custom URL scheme(s). "
