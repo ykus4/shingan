@@ -56,15 +56,17 @@ Every checker in `shingan/core/checkers/ios/` or `shingan/core/checkers/android/
 def check(ctx: CheckContext) -> list[Finding]:
     findings: list[Finding] = []
     # use ctx.strings, ctx.lief_binary, ctx.info_plist, ctx.symbol_names, ...
-    findings.append(Finding(
-        rule_id="IOS-XXX-NNN",
-        title="...",
-        severity=Severity.HIGH,
-        description="...",
-        evidence="...",
-        recommendation="...",
-        masvs="MASVS-...",
-    ))
+    findings.append(
+        Finding(
+            rule_id="IOS-XXX-NNN",
+            title="...",
+            severity=Severity.HIGH,
+            description="...",
+            evidence="...",
+            recommendation="...",
+            masvs="MASVS-...",
+        )
+    )
     return findings
 ```
 
