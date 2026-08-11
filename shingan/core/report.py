@@ -1,4 +1,4 @@
-"""Report generation: JSON, SARIF, HTML."""
+"""Report generation: JSON, SARIF, HTML, PDF."""
 
 from __future__ import annotations
 
@@ -7,10 +7,13 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from shingan.core.models import ScanResult, Severity
+from shingan.core.models import SEVERITY_ORDER, ScanResult, Severity
+from shingan.core.version import get_version
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "web" / "templates"
 _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescape=True)
+
+_TOOL_URI = "https://github.com/ykus4/shingan"
 
 # ---------------------------------------------------------------------------
 # Localization strings (EN / JA)
@@ -18,8 +21,9 @@ _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescap
 
 _I18N: dict[str, dict[str, str]] = {
     "en": {
-        "title": "shingan — iOS IPA Security Report",
+        "title": "shingan — Mobile App Security Report",
         "findings": "Findings",
+        "critical": "Critical",
         "high": "High",
         "medium": "Medium",
         "low": "Low",
@@ -32,8 +36,9 @@ _I18N: dict[str, dict[str, str]] = {
         "masvs": "MASVS",
     },
     "ja": {
-        "title": "shingan — iOS IPA セキュリティレポート",
+        "title": "shingan — モバイルアプリ セキュリティレポート",
         "findings": "検出結果",
+        "critical": "緊急",
         "high": "高",
         "medium": "中",
         "low": "低",
@@ -47,33 +52,96 @@ _I18N: dict[str, dict[str, str]] = {
     },
 }
 
-# SARIF severity mapping
-_SARIF_LEVEL = {
+DEFAULT_LANG = "en"
+
+# SARIF severity mapping. SARIF has no "critical" level, so the most severe
+# findings map to "error" alongside HIGH and carry a rank for ordering.
+_SARIF_LEVEL: dict[Severity, str] = {
+    Severity.CRITICAL: "error",
     Severity.HIGH: "error",
     Severity.MEDIUM: "warning",
     Severity.LOW: "note",
     Severity.INFO: "none",
 }
 
+#: SARIF `rank` (0.0-100.0) conveys the severity that `level` cannot express.
+_SARIF_RANK: dict[Severity, float] = {
+    Severity.CRITICAL: 100.0,
+    Severity.HIGH: 80.0,
+    Severity.MEDIUM: 50.0,
+    Severity.LOW: 20.0,
+    Severity.INFO: 0.0,
+}
+
+
+def _i18n_for(lang: str) -> dict[str, str]:
+    return _I18N.get(lang, _I18N[DEFAULT_LANG])
+
 
 def to_json(result: ScanResult, indent: int = 2) -> str:
     return json.dumps(result.to_dict(), ensure_ascii=False, indent=indent)
 
 
+def to_text(result: ScanResult) -> str:
+    """Render a plain-text report.
+
+    ``--format text --out FILE`` previously wrote an empty file because the
+    renderer had no text branch and returned "".
+    """
+    summary = result.to_dict()["summary"]
+    lines = [
+        f"shingan report — {result.artifact_name}",
+        f"App:      {result.app_id} {result.app_version} ({result.build})",
+        f"Platform: {result.platform}",
+        f"Scanned:  {result.scanned_at}",
+        f"Version:  shingan {get_version()}",
+        "",
+        "Summary:",
+        *(
+            f"  {severity.value:<9} {summary[severity.value]}"
+            for severity in SEVERITY_ORDER
+        ),
+        f"  {'total':<9} {summary['total']}",
+        f"  {'suppressed':<9} {summary['suppressed']}",
+        "",
+        "Findings:",
+    ]
+
+    if not result.findings:
+        lines.append("  (none)")
+    else:
+        for f in sorted(result.findings, key=lambda x: x.severity.rank):
+            lines.append(f"  [{f.severity.value.upper()}] {f.rule_id} — {f.title}")
+            if f.masvs:
+                lines.append(f"      MASVS: {f.masvs}")
+            if f.evidence:
+                first_line = f.evidence.splitlines()[0] if f.evidence.strip() else ""
+                if first_line:
+                    lines.append(f"      Evidence: {first_line}")
+            if f.recommendation:
+                lines.append(f"      Fix: {f.recommendation}")
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def to_sarif(result: ScanResult) -> str:
-    rules = {}
+    rules: dict[str, dict] = {}
     for f in result.findings:
-        if f.rule_id not in rules:
-            rules[f.rule_id] = {
-                "id": f.rule_id,
-                "name": f.rule_id.replace("-", "_"),
-                "shortDescription": {"text": f.title},
-                "fullDescription": {"text": f.description},
-                "help": {"text": f.recommendation},
-                "defaultConfiguration": {
-                    "level": _SARIF_LEVEL.get(f.severity, "warning")
-                },
-            }
+        if f.rule_id in rules:
+            continue
+        rules[f.rule_id] = {
+            "id": f.rule_id,
+            "name": f.rule_id.replace("-", "_"),
+            "shortDescription": {"text": f.title},
+            "fullDescription": {"text": f.description},
+            "help": {"text": f.recommendation},
+            "defaultConfiguration": {"level": _SARIF_LEVEL[f.severity]},
+            "properties": {
+                "security-severity": str(_SARIF_RANK[f.severity]),
+                **({"masvs": f.masvs} if f.masvs else {}),
+            },
+        }
 
     sarif = {
         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -83,23 +151,28 @@ def to_sarif(result: ScanResult) -> str:
                 "tool": {
                     "driver": {
                         "name": "shingan",
-                        "version": "1.0.0",
-                        "informationUri": "https://github.com/ykus4/shingan",
+                        "version": get_version(),
+                        "informationUri": _TOOL_URI,
                         "rules": list(rules.values()),
                     }
                 },
                 "results": [
                     {
                         "ruleId": f.rule_id,
-                        "level": _SARIF_LEVEL.get(f.severity, "warning"),
+                        "level": _SARIF_LEVEL[f.severity],
+                        "rank": _SARIF_RANK[f.severity],
                         "message": {
-                            "text": f"{f.title}\n\n{f.description}\n\nEvidence:\n{f.evidence}\n\nRecommendation:\n{f.recommendation}"
+                            "text": (
+                                f"{f.title}\n\n{f.description}\n\n"
+                                f"Evidence:\n{f.evidence}\n\n"
+                                f"Recommendation:\n{f.recommendation}"
+                            )
                         },
                         "locations": [
                             {
                                 "physicalLocation": {
                                     "artifactLocation": {
-                                        "uri": result.ipa_name,
+                                        "uri": result.artifact_name,
                                         "uriBaseId": "%SRCROOT%",
                                     }
                                 }
@@ -118,7 +191,7 @@ def to_pdf(
     result: ScanResult,
     diff_new: set[str] | None = None,
     diff_fixed: set[str] | None = None,
-    lang: str = "en",
+    lang: str = DEFAULT_LANG,
 ) -> bytes:
     """Render result as a PDF via WeasyPrint.
 
@@ -142,10 +215,11 @@ def to_html(
     result: ScanResult,
     diff_new: set[str] | None = None,
     diff_fixed: set[str] | None = None,
-    lang: str = "en",
+    lang: str = DEFAULT_LANG,
 ) -> str:
     summary = result.to_dict()["summary"]
-    i18n = _I18N.get(lang, _I18N["en"])
+    new_fps = diff_new or set()
+    fixed_fps = diff_fixed or set()
 
     findings = []
     for f in result.findings:
@@ -159,24 +233,28 @@ def to_html(
                 "evidence": f.evidence,
                 "recommendation": f.recommendation,
                 "masvs": f.masvs,
-                "is_new": bool(diff_new and fp in diff_new),
-                "is_fixed": bool(diff_fixed and fp in diff_fixed),
+                "is_new": fp in new_fps,
+                "is_fixed": fp in fixed_fps,
             }
         )
 
     template = _jinja_env.get_template("report.html")
     return template.render(
-        ipa_name=result.ipa_name,
+        ipa_name=result.artifact_name,
+        artifact_name=result.artifact_name,
         app_id=result.app_id,
         app_version=result.app_version,
         build=result.build,
+        platform=result.platform,
         scanned_at=result.scanned_at,
-        high=summary["high"],
-        medium=summary["medium"],
-        low=summary["low"],
-        info_count=summary["info"],
+        critical=summary[Severity.CRITICAL.value],
+        high=summary[Severity.HIGH.value],
+        medium=summary[Severity.MEDIUM.value],
+        low=summary[Severity.LOW.value],
+        info_count=summary[Severity.INFO.value],
         total=summary["total"],
         findings=findings,
-        i18n=i18n,
+        i18n=_i18n_for(lang),
         lang=lang,
+        version=get_version(),
     )

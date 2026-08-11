@@ -121,7 +121,7 @@ def check(ctx: AndroidCheckContext) -> list[Finding]:
 
 def _parse_elf(path: Path) -> Any | None:
     try:
-        import lief  # type: ignore[import]
+        import lief
 
         binary = lief.parse(str(path))
         if binary is None or not isinstance(binary, lief.ELF.Binary):
@@ -156,7 +156,7 @@ def _has_stack_canary(binary: Any) -> bool:
 
 def _has_relro(binary: Any) -> bool:
     try:
-        import lief  # type: ignore[import]
+        import lief
 
         for seg in binary.segments:
             if seg.type in (

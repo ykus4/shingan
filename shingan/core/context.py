@@ -1,8 +1,8 @@
-"""Binary analysis context — shared, cached access to string table and LIEF binary.
+"""Binary analysis context — shared, cached access to string table and binary.
 
-Every checker receives a `CheckContext` instead of a raw `Path`.  The context
-lazily extracts strings and parses the Mach-O binary exactly once, so repeated
-calls across checkers do not re-invoke subprocesses or re-parse the binary.
+Every checker receives a context object instead of a raw ``Path``.  The context
+lazily extracts strings and parses the binary exactly once, so repeated calls
+across checkers do not re-invoke subprocesses or re-parse the binary.
 
 Usage::
 
@@ -15,24 +15,26 @@ Usage::
 from __future__ import annotations
 
 import logging
-import subprocess
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
-from shingan.core.constants import STRINGS_MIN_LEN, SUBPROCESS_TIMEOUT
+from shingan.core.constants import SECRETS_STRINGS_MIN_LEN, STRINGS_MIN_LEN
+from shingan.core.shell import extract_strings
 
 logger = logging.getLogger(__name__)
 
 
 class CheckContext:
-    """Shared state passed to every checker.
+    """Shared state passed to every iOS checker.
 
     Attributes:
         binary_path: Path to the main Mach-O executable.
         info_plist: Parsed Info.plist dictionary (may be empty).
         app_dir: Optional path to the .app bundle directory.
     """
+
+    platform = "ios"
 
     def __init__(
         self,
@@ -52,23 +54,23 @@ class CheckContext:
 
         Returns an empty set if the command fails or is unavailable.
         """
-        try:
-            result = subprocess.run(
-                ["strings", "-a", "-n", str(STRINGS_MIN_LEN), str(self.binary_path)],
-                capture_output=True,
-                text=True,
-                timeout=SUBPROCESS_TIMEOUT,
-            )
-            return set(result.stdout.splitlines())
-        except Exception as exc:
-            logger.debug("strings command failed for %s: %s", self.binary_path, exc)
-            return set()
+        return extract_strings(self.binary_path, STRINGS_MIN_LEN)
+
+    @cached_property
+    def long_strings(self) -> set[str]:
+        """Strings at least ``SECRETS_STRINGS_MIN_LEN`` characters long.
+
+        Derived by filtering :attr:`strings` rather than re-running ``strings``
+        with a higher ``-n``: the previous implementation scanned the whole
+        binary a second time to obtain a strict subset of what it already had.
+        """
+        return {s for s in self.strings if len(s) >= SECRETS_STRINGS_MIN_LEN}
 
     @cached_property
     def lief_binary(self) -> Any | None:
         """Parsed LIEF Mach-O binary object, or None if parsing fails."""
         try:
-            import lief  # type: ignore[import]
+            import lief
 
             binary = lief.parse(str(self.binary_path))
             if binary is None:
@@ -101,7 +103,8 @@ class CheckContext:
             return []
         try:
             return [cls.name for cls in binary.objc_classes]
-        except Exception:
+        except Exception as exc:
+            logger.debug("objc_classes extraction failed: %s", exc)
             return []
 
     @cached_property
@@ -118,9 +121,20 @@ class AndroidCheckContext:
         work_dir: Directory where the APK was extracted.
     """
 
-    def __init__(self, apk_path: Path, work_dir: Path | None = None) -> None:
+    platform = "android"
+
+    def __init__(
+        self,
+        apk_path: Path,
+        work_dir: Path | None = None,
+        apk: Any | None = None,
+    ) -> None:
         self.apk_path = apk_path
         self.work_dir = work_dir or apk_path.parent
+        # Ingestion already parses the APK to read manifest metadata; accepting
+        # it here avoids a second full parse of the same file.
+        if apk is not None:
+            self.__dict__["apk"] = apk
 
     # ── Lazy properties ───────────────────────────────────────────────────────
 
@@ -128,7 +142,7 @@ class AndroidCheckContext:
     def apk(self) -> Any | None:
         """androguard APK object, or None if parsing fails."""
         try:
-            from androguard.core.apk import APK  # type: ignore[import]
+            from androguard.core.apk import APK
 
             return APK(str(self.apk_path))
         except Exception as exc:
@@ -139,7 +153,7 @@ class AndroidCheckContext:
     def dex_analysis(self) -> Any | None:
         """androguard Analysis object for DEX bytecode, or None if parsing fails."""
         try:
-            from androguard.misc import AnalyzeAPK  # type: ignore[import]
+            from androguard.misc import AnalyzeAPK
 
             _, _, dx = AnalyzeAPK(str(self.apk_path))
             return dx
@@ -163,18 +177,7 @@ class AndroidCheckContext:
         """
         result: set[str] = set()
         for so_path in self.native_binaries:
-            try:
-                import subprocess
-
-                proc = subprocess.run(
-                    ["strings", "-a", "-n", str(STRINGS_MIN_LEN), str(so_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=SUBPROCESS_TIMEOUT,
-                )
-                result.update(proc.stdout.splitlines())
-            except Exception as exc:
-                logger.debug("strings command failed for %s: %s", so_path, exc)
+            result |= extract_strings(so_path, STRINGS_MIN_LEN)
         return result
 
     @cached_property
@@ -209,3 +212,40 @@ class AndroidCheckContext:
     def all_text(self) -> set[str]:
         """Union of native .so strings, DEX strings, and method names."""
         return self.strings | self.dex_strings | self.symbol_names
+
+    @cached_property
+    def long_strings(self) -> set[str]:
+        """Secret-scanning corpus: DEX + native strings above the length floor."""
+        return {
+            s
+            for s in (self.dex_strings | self.strings)
+            if len(s) >= SECRETS_STRINGS_MIN_LEN
+        }
+
+    @cached_property
+    def manifest_summary(self) -> dict[str, str]:
+        """Flat manifest key/value map used by custom rules.
+
+        Cached because custom-rule evaluation previously rebuilt this for every
+        rule that targeted ``android_manifest``.
+        """
+        apk = self.apk
+        if apk is None:
+            return {}
+        summary: dict[str, str] = {}
+        try:
+            summary["package"] = apk.get_package() or ""
+            summary["versionName"] = apk.get_androidversion_name() or ""
+            summary["versionCode"] = str(apk.get_androidversion_code() or "")
+            summary["minSdkVersion"] = str(apk.get_min_sdk_version() or "")
+            summary["targetSdkVersion"] = str(apk.get_target_sdk_version() or "")
+            summary["debuggable"] = str(
+                apk.get_attribute_value("application", "debuggable") or "false"
+            )
+            summary["allowBackup"] = str(
+                apk.get_attribute_value("application", "allowBackup") or "false"
+            )
+            summary["permissions"] = " ".join(apk.get_permissions())
+        except Exception as exc:
+            logger.debug("manifest_summary extraction failed: %s", exc)
+        return summary

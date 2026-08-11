@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 
 from shingan.core.dynamic.context import DynamicContext
 from shingan.core.models import Finding, Severity
+from shingan.core.shell import run_command
 
 logger = logging.getLogger(__name__)
+
+#: Maximum characters of lldb output retained for diagnosis.
+_OUTPUT_SNIPPET_LEN = 800
+
+#: Stderr/stdout markers that mean the attach was actively refused.
+_REFUSAL_MARKERS = (
+    "ptrace: Operation not permitted",
+    "error: attach failed",
+    "cannot attach",
+    "Permission denied",
+    "error: attach exited",
+)
 
 _DESCRIPTIONS = {
     "bypassed": (
@@ -70,48 +82,37 @@ def _resolve_pid(ctx: DynamicContext) -> int | None:
 
 
 def _attempt_lldb_attach(pid: int, timeout: int = 15) -> dict:
-    """Run LLDB in batch mode and parse the result."""
-    try:
-        result = subprocess.run(
-            [
-                "lldb",
-                "--batch",
-                "-o",
-                f"process attach --pid {pid}",
-                "-o",
-                "thread list",
-                "-o",
-                "quit",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        stdout = (result.stdout + result.stderr)[:800]
+    """Run LLDB in batch mode and classify the result."""
+    result = run_command(
+        [
+            "lldb",
+            "--batch",
+            "-o",
+            f"process attach --pid {pid}",
+            "-o",
+            "thread list",
+            "-o",
+            "quit",
+        ],
+        timeout=timeout,
+    )
 
-        if "stopped" in stdout.lower() and "process attach" in stdout:
-            return {"outcome": "bypassed", "detail": stdout}
-        if any(
-            kw in stdout
-            for kw in [
-                "ptrace: Operation not permitted",
-                "error: attach failed",
-                "cannot attach",
-                "Permission denied",
-                "error: attach exited",
-            ]
-        ):
-            return {"outcome": "resistant", "detail": stdout}
-        return {"outcome": "error", "detail": stdout}
-
-    except FileNotFoundError:
+    if result.missing:
         return {"outcome": "unavailable", "detail": "lldb not found in PATH"}
-    except subprocess.TimeoutExpired:
-        # Attach hung — PT_DENY_ATTACH likely triggered a signal
+    if result.timed_out:
+        # Attach hung — PT_DENY_ATTACH likely triggered a signal.
         return {
             "outcome": "resistant",
             "detail": "lldb attach timed out — PT_DENY_ATTACH likely effective",
         }
+
+    output = (result.stdout + result.stderr)[:_OUTPUT_SNIPPET_LEN]
+
+    if "stopped" in output.lower() and "process attach" in output:
+        return {"outcome": "bypassed", "detail": output}
+    if any(marker in output for marker in _REFUSAL_MARKERS):
+        return {"outcome": "resistant", "detail": output}
+    return {"outcome": "error", "detail": output}
 
 
 def _make_finding(outcome: str, detail: str) -> Finding:

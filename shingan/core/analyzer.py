@@ -5,43 +5,44 @@ from __future__ import annotations
 import datetime
 import logging
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, cast
 
+from shingan.core.checkers.registry import checkers_for, run_checkers
 from shingan.core.context import AndroidCheckContext, CheckContext
-from shingan.core.checkers.ios import (
-    ats,
-    binary_protection,
-    crypto,
-    data_handling,
-    debug_flags,
-    keychain,
-    metadata,
-    protection,
-    sbom,
-    secrets,
-    symbols,
-    webview,
-)
-from shingan.core.checkers.android import (
-    binary_protection as android_binary_protection,
-    crypto as android_crypto,
-    data_handling as android_data_handling,
-    debug_flags as android_debug_flags,
-    manifest as android_manifest,
-    network_security as android_network_security,
-    permissions as android_permissions,
-    protection as android_protection,
-    sbom as android_sbom,
-    secrets as android_secrets,
-    signing as android_signing,
-    webview as android_webview,
-)
-from shingan.core.ingest import APKBundle, ingest
-from shingan.core.models import ScanResult
-from shingan.core.rules import DEFAULT_RULES_DIR, apply_custom_rules
+from shingan.core.ingest import APKBundle, IPABundle, ingest
+from shingan.core.models import Finding, ScanResult
+from shingan.core.rules import apply_custom_rules
 from shingan.core.suppression import SuppressionStore
 
 logger = logging.getLogger(__name__)
+
+#: Platforms shingan can analyse.
+Platform = Literal["ios", "android"]
+
+
+@dataclass(frozen=True)
+class DynamicOptions:
+    """Settings for optional on-device (frida) analysis."""
+
+    enabled: bool = False
+    device_udid: str | None = None
+    timeout: int = 30
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time as an ISO-8601 string with a trailing ``Z``.
+
+    ``datetime.utcnow()`` is deprecated from Python 3.12 because it returns a
+    naive datetime that silently misrepresents the timezone.
+    """
+    return (
+        datetime.datetime.now(datetime.UTC)
+        .replace(tzinfo=None, microsecond=0)
+        .isoformat()
+        + "Z"
+    )
 
 
 def analyze(
@@ -53,187 +54,114 @@ def analyze(
     device_udid: str | None = None,
     dynamic_timeout: int = 30,
 ) -> ScanResult:
-    """Run all checkers on an IPA / .app / .xcarchive / .apk and return a ScanResult."""
-    if Path(input_path).suffix.lower() == ".apk":
-        return _analyze_android(
-            input_path,
-            work_dir,
-            suppression_store,
-            custom_rules_dir,
-            dynamic=dynamic,
-            device_udid=device_udid,
-            dynamic_timeout=dynamic_timeout,
-        )
-    return _analyze_ios(
-        input_path,
-        work_dir,
-        suppression_store,
-        custom_rules_dir,
-        dynamic=dynamic,
-        device_udid=device_udid,
-        dynamic_timeout=dynamic_timeout,
+    """Run all checkers on an IPA / .app / .xcarchive / .apk and return a ScanResult.
+
+    Input-format dispatch happens once, inside :func:`ingest`; this function
+    branches on the resulting bundle type rather than re-inspecting the suffix.
+    """
+    options = DynamicOptions(
+        enabled=dynamic, device_udid=device_udid, timeout=dynamic_timeout
+    )
+    bundle = ingest(input_path, work_dir)
+    try:
+        result: ScanResult
+        ctx: CheckContext | AndroidCheckContext
+        if isinstance(bundle, APKBundle):
+            result, ctx = _prepare_android(bundle)
+        else:
+            result, ctx = _prepare_ios(bundle)
+
+        result.findings.extend(run_checkers(checkers_for(result.platform), ctx))
+
+        # Custom YAML rules apply to both platforms.
+        try:
+            result.findings.extend(apply_custom_rules(ctx, rules_dir=custom_rules_dir))
+        except Exception:
+            logger.exception("Custom rules failed — skipping")
+
+        if options.enabled:
+            result.findings.extend(
+                _run_dynamic(result.app_id, cast("Platform", result.platform), options)
+            )
+
+        if suppression_store:
+            active, suppressed = suppression_store.apply(result.findings)
+            result.findings = active
+            result.suppressed_count = len(suppressed)
+
+        return result
+    finally:
+        # Only removes the directory when ingestion created it.
+        bundle.cleanup()
+
+
+def _new_result(
+    *,
+    app_id: str,
+    app_version: str,
+    build: str,
+    artifact_name: str,
+    platform: str,
+) -> ScanResult:
+    return ScanResult(
+        scan_id=str(uuid.uuid4()),
+        scanned_at=_utc_now_iso(),
+        app_id=app_id,
+        app_version=app_version,
+        build=build,
+        artifact_name=artifact_name,
+        platform=platform,
     )
 
 
-def _analyze_ios(
-    input_path: Path,
-    work_dir: Path | None = None,
-    suppression_store: SuppressionStore | None = None,
-    custom_rules_dir: Path | None = None,
-    dynamic: bool = False,
-    device_udid: str | None = None,
-    dynamic_timeout: int = 30,
-) -> ScanResult:
-    """Run all iOS checkers on an IPA / .app / .xcarchive."""
-    bundle = ingest(input_path, work_dir)
-
+def _prepare_ios(bundle: IPABundle) -> tuple[ScanResult, CheckContext]:
     info = bundle.info_plist
-    result = ScanResult(
-        scan_id=str(uuid.uuid4()),
-        scanned_at=datetime.datetime.utcnow().isoformat() + "Z",
+    result = _new_result(
         app_id=info.get("CFBundleIdentifier", "unknown"),
         app_version=info.get("CFBundleShortVersionString", "unknown"),
         build=info.get("CFBundleVersion", "unknown"),
-        ipa_name=bundle.ipa_path.name,
+        artifact_name=bundle.ipa_path.name,
         platform="ios",
     )
-
-    # Build one shared context — strings and binary are parsed lazily and cached.
+    # One shared context — strings and binary are parsed lazily and cached.
     ctx = CheckContext(
         binary_path=bundle.binary_path,
         info_plist=bundle.info_plist,
         app_dir=bundle.app_dir,
     )
-
-    # Checkers that operate on the binary via CheckContext
-    binary_checkers = [
-        symbols.check,
-        secrets.check,
-        debug_flags.check,
-        protection.check,
-        binary_protection.check,
-        crypto.check,
-        keychain.check,
-        sbom.check,
-        webview.check,
-        data_handling.check,
-    ]
-    for checker in binary_checkers:
-        try:
-            result.findings += checker(ctx)
-        except Exception:
-            logger.exception("Checker %s failed — skipping", checker.__module__)
-
-    # Checkers that operate on Info.plist only
-    plist_checkers = [
-        lambda c: ats.check(c.info_plist),
-        lambda c: metadata.check(c.info_plist),
-    ]
-    for checker in plist_checkers:
-        try:
-            result.findings += checker(ctx)
-        except Exception:
-            logger.exception("Plist checker failed — skipping")
-
-    # Custom YAML rules
-    try:
-        rules_dir = custom_rules_dir or DEFAULT_RULES_DIR
-        result.findings += apply_custom_rules(ctx, rules_dir=rules_dir)
-    except Exception:
-        logger.exception("Custom rules failed — skipping")
-
-    # Dynamic analysis (optional)
-    if dynamic:
-        try:
-            from shingan.core.dynamic import run_dynamic_checks
-
-            result.findings += run_dynamic_checks(
-                bundle_id=result.app_id,
-                device_udid=device_udid,
-                timeout=dynamic_timeout,
-                platform="ios",
-            )
-        except Exception:
-            logger.exception("Dynamic analysis failed — skipping")
-
-    if suppression_store:
-        active, suppressed = suppression_store.apply(result.findings)
-        result.findings = active
-        result.suppressed_count = len(suppressed)
-
-    if work_dir is None:
-        bundle.cleanup()
-
-    return result
+    return result, ctx
 
 
-def _analyze_android(
-    input_path: Path,
-    work_dir: Path | None = None,
-    suppression_store: SuppressionStore | None = None,
-    custom_rules_dir: Path | None = None,
-    dynamic: bool = False,
-    device_udid: str | None = None,
-    dynamic_timeout: int = 30,
-) -> ScanResult:
-    """Run all Android checkers on an APK."""
-    from shingan.core.ingest import ingest_apk
-
-    bundle = ingest_apk(input_path, work_dir)
-    assert isinstance(bundle, APKBundle)
-
-    result = ScanResult(
-        scan_id=str(uuid.uuid4()),
-        scanned_at=datetime.datetime.utcnow().isoformat() + "Z",
+def _prepare_android(bundle: APKBundle) -> tuple[ScanResult, AndroidCheckContext]:
+    result = _new_result(
         app_id=bundle.package_name,
         app_version=bundle.version_name,
         build=bundle.version_code,
-        ipa_name=bundle.apk_path.name,
+        artifact_name=bundle.apk_path.name,
         platform="android",
     )
+    # Reuse the APK object parsed during ingestion instead of parsing again.
+    ctx = AndroidCheckContext(
+        apk_path=bundle.apk_path,
+        work_dir=bundle.work_dir,
+        apk=bundle.apk,
+    )
+    return result, ctx
 
-    ctx = AndroidCheckContext(apk_path=bundle.apk_path, work_dir=bundle.work_dir)
 
-    checkers = [
-        android_manifest.check,
-        android_debug_flags.check,
-        android_network_security.check,
-        android_binary_protection.check,
-        android_crypto.check,
-        android_secrets.check,
-        android_protection.check,
-        android_permissions.check,
-        android_sbom.check,
-        android_signing.check,
-        android_webview.check,
-        android_data_handling.check,
-    ]
-    for checker in checkers:
-        try:
-            result.findings += checker(ctx)
-        except Exception:
-            logger.exception("Android checker %s failed — skipping", checker.__module__)
+def _run_dynamic(
+    app_id: str, platform: Platform, options: DynamicOptions
+) -> list[Finding]:
+    """Run on-device checks, never letting a failure abort the static scan."""
+    try:
+        from shingan.core.dynamic import run_dynamic_checks
 
-    # Dynamic analysis (optional)
-    if dynamic:
-        try:
-            from shingan.core.dynamic import run_dynamic_checks
-
-            result.findings += run_dynamic_checks(
-                bundle_id=result.app_id,
-                device_udid=device_udid,
-                timeout=dynamic_timeout,
-                platform="android",
-            )
-        except Exception:
-            logger.exception("Dynamic analysis (Android) failed — skipping")
-
-    if suppression_store:
-        active, suppressed = suppression_store.apply(result.findings)
-        result.findings = active
-        result.suppressed_count = len(suppressed)
-
-    if work_dir is None:
-        bundle.cleanup()
-
-    return result
+        return run_dynamic_checks(
+            bundle_id=app_id,
+            device_udid=options.device_udid,
+            timeout=options.timeout,
+            platform=platform,
+        )
+    except Exception:
+        logger.exception("Dynamic analysis failed — skipping")
+        return []

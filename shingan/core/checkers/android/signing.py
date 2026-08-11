@@ -8,6 +8,7 @@ Checks:
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
@@ -77,7 +78,7 @@ def check(ctx: AndroidCheckContext) -> list[Finding]:
     return findings
 
 
-def _check_v2_or_v3(apk) -> bool:
+def _check_v2_or_v3(apk: Any) -> bool:
     """Return True if the APK has v2 or v3 signing scheme."""
     # androguard >= 3.4 exposes is_signed_v2() / is_signed_v3()
     for method_name in ("is_signed_v2", "is_signed_v3"):
@@ -85,8 +86,8 @@ def _check_v2_or_v3(apk) -> bool:
             method = getattr(apk, method_name, None)
             if callable(method) and method():
                 return True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Signature probe %s failed: %s", method_name, exc)
 
     # Fallback: check META-INF for APK Sig Block indicator files
     # (not conclusive, but better than nothing)
@@ -96,7 +97,7 @@ def _check_v2_or_v3(apk) -> bool:
         # but the real check needs binary parsing of the APK Signing Block.
         # Without that, we conservatively return False so the finding fires.
         _ = names
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("APK signing block inspection failed: %s", exc)
 
     return False

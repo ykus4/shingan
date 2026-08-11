@@ -8,8 +8,13 @@ Checks:
 
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 from shingan.core.context import AndroidCheckContext
 from shingan.core.models import Finding, Severity
+
+logger = logging.getLogger(__name__)
 
 # Devices running Android < 6.0 (API 23) don't support runtime permissions.
 _MIN_SDK_THRESHOLD = 23
@@ -43,8 +48,8 @@ def check(ctx: AndroidCheckContext) -> list[Finding]:
                     masvs="MASVS-PLATFORM-1",
                 )
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("debuggable/allowBackup inspection failed: %s", exc)
 
     # AND-META-013b: exported components without permission
     _check_exported_components(apk, findings)
@@ -73,29 +78,25 @@ def check(ctx: AndroidCheckContext) -> list[Finding]:
                         masvs="MASVS-RESILIENCE-1",
                     )
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("SDK version inspection failed: %s", exc)
 
     return findings
 
 
-def _check_exported_components(apk, findings: list[Finding]) -> None:
+def _check_exported_components(apk: Any, findings: list[Finding]) -> None:
     """Flag exported components that declare no android:permission guard."""
     component_types = ["activity", "service", "receiver", "provider"]
     exposed: list[str] = []
 
     for comp_type in component_types:
         try:
-            for item in apk.get_declared_permissions_details().keys():
-                # Use androguard's component iteration
-                pass
-            # Iterate components via androguard's xml tree
             components = _get_components(apk, comp_type)
             for name, exported, has_permission in components:
                 if exported and not has_permission:
                     exposed.append(f"{comp_type}: {name}")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Component enumeration failed for %s: %s", comp_type, exc)
 
     if exposed:
         findings.append(
@@ -118,9 +119,9 @@ def _check_exported_components(apk, findings: list[Finding]) -> None:
         )
 
 
-def _get_components(apk, comp_type: str) -> list[tuple[str, bool, bool]]:
+def _get_components(apk: Any, comp_type: str) -> list[tuple[str, bool, bool]]:
     """Return list of (name, is_exported, has_permission) for a component type."""
-    result = []
+    result: list[tuple[str, bool, bool]] = []
     try:
         xml = apk.get_android_manifest_xml()
         app_element = xml.find("application")
@@ -134,6 +135,6 @@ def _get_components(apk, comp_type: str) -> list[tuple[str, bool, bool]]:
             is_exported = str(exported_val).lower() == "true"
             has_permission = bool(permission_val)
             result.append((name, is_exported, has_permission))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Manifest component parsing failed: %s", exc)
     return result

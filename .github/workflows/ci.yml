@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main, dev]
 
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint
@@ -26,6 +34,22 @@ jobs:
       - name: ruff format check
         run: uv run ruff format --check .
 
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: mypy
+        run: uv run mypy
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -39,5 +63,34 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      - name: Run tests
-        run: uv run pytest tests/ -v --tb=short
+      # binutils provides `strings`, which the binary checkers shell out to.
+      - name: Install binutils
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends binutils
+
+      - name: Run tests with coverage
+        run: uv run pytest tests/ -v --tb=short --cov --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # Reports known advisories against the locked dependency set. Advisory
+      # feeds change independently of this repo, so a failure here is
+      # informational rather than blocking.
+      - name: pip-audit
+        continue-on-error: true
+        run: uvx pip-audit --strict --progress-spinner off

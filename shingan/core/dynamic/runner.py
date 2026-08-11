@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from shingan.core.dynamic.checks import jailbreak_bypass, pt_deny_attach, ssl_pinning
 from shingan.core.dynamic.checks import (
+    jailbreak_bypass,
+    pt_deny_attach,
     root_bypass_android,
+    ssl_pinning,
     ssl_unpinning_android,
 )
 from shingan.core.dynamic.context import DynamicContext
@@ -145,7 +147,7 @@ def _error_finding(module: str, exc: Exception, platform: str) -> list[Finding]:
     return [
         Finding(
             rule_id=f"{prefix}-DYN-000",
-            title=f"Dynamic checker error: {module.split('.')[-1]}",
+            title=f"Dynamic checker error: {module.rsplit('.', maxsplit=1)[-1]}",
             severity=Severity.MEDIUM,
             description=f"Dynamic checker {module} raised an unexpected exception.",
             evidence=str(exc)[:300],

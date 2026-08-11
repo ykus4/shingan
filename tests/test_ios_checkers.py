@@ -1,451 +1,249 @@
-"""Unit tests for individual checkers using synthetic inputs."""
+"""Unit tests for the iOS checkers using synthetic inputs.
+
+Model, diff, report, and suppression tests used to live here too; they now have
+their own modules so this file covers only checkers.
+"""
 
 from __future__ import annotations
 
-import json
-import tempfile
-from pathlib import Path
-
-from shingan.core.context import CheckContext
-from shingan.core.checkers.ios import ats
+from shingan.core.checkers.ios import ats, metadata
 from shingan.core.checkers.ios.crypto import check as check_crypto
 from shingan.core.checkers.ios.debug_flags import check as check_debug
-from shingan.core.checkers.ios.metadata import check as check_metadata
 from shingan.core.checkers.ios.protection import check as check_protection
-from shingan.core.checkers.ios.secrets import _shannon_entropy
+from shingan.core.checkers.ios.secrets import check as check_secrets
 from shingan.core.constants import LSA_SCHEMES_THRESHOLD
-from shingan.core.diff import compare
-from shingan.core.models import Finding, ScanResult, Severity
-from shingan.core.report import to_html, to_json, to_sarif
-from shingan.core.suppression import Suppression, SuppressionStore
+from shingan.core.models import Severity
+
+# ── Uniform checker interface ─────────────────────────────────────────────────
+
+
+def test_ats_uses_the_context_interface(make_ios_ctx) -> None:
+    """ats/metadata took a raw dict while every other checker took a context."""
+    ctx = make_ios_ctx(
+        info_plist={"NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True}}
+    )
+    assert any(f.rule_id == "IOS-ATS-003a" for f in ats.check(ctx))
+
+
+def test_metadata_uses_the_context_interface(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(info_plist={"UIBackgroundModes": ["voip"]})
+    assert any(f.rule_id == "IOS-META-012a" for f in metadata.check(ctx))
 
 
 # ── ATS checker ───────────────────────────────────────────────────────────────
 
 
-def test_ats_clean():
-    findings = ats.check({})
-    assert findings == []
+def test_ats_clean() -> None:
+    assert ats.check_plist({}) == []
 
 
-def test_ats_arbitrary_loads():
-    plist = {"NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True}}
-    findings = ats.check(plist)
+def test_ats_arbitrary_loads() -> None:
+    findings = ats.check_plist(
+        {"NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True}}
+    )
     assert any(f.rule_id == "IOS-ATS-003a" for f in findings)
     assert any(f.severity == Severity.HIGH for f in findings)
 
 
-def test_ats_arbitrary_loads_false():
-    plist = {"NSAppTransportSecurity": {"NSAllowsArbitraryLoads": False}}
-    findings = ats.check(plist)
+def test_ats_arbitrary_loads_false() -> None:
+    findings = ats.check_plist(
+        {"NSAppTransportSecurity": {"NSAllowsArbitraryLoads": False}}
+    )
     assert not any(f.rule_id == "IOS-ATS-003a" for f in findings)
 
 
-def test_ats_domain_http_exception():
-    plist = {
-        "NSAppTransportSecurity": {
-            "NSExceptionDomains": {
-                "example.com": {"NSExceptionAllowsInsecureHTTPLoads": True}
+def test_ats_media_and_web_exceptions() -> None:
+    findings = ats.check_plist(
+        {
+            "NSAppTransportSecurity": {
+                "NSAllowsArbitraryLoadsForMedia": True,
+                "NSAllowsArbitraryLoadsInWebContent": True,
             }
         }
-    }
-    findings = ats.check(plist)
+    )
+    ids = {f.rule_id for f in findings}
+    assert {"IOS-ATS-003b", "IOS-ATS-003c"} <= ids
+
+
+def test_ats_local_networking() -> None:
+    findings = ats.check_plist(
+        {"NSAppTransportSecurity": {"NSAllowsLocalNetworking": True}}
+    )
+    assert any(f.rule_id == "IOS-ATS-003d" for f in findings)
+
+
+def test_ats_domain_http_exception() -> None:
+    findings = ats.check_plist(
+        {
+            "NSAppTransportSecurity": {
+                "NSExceptionDomains": {
+                    "example.com": {"NSExceptionAllowsInsecureHTTPLoads": True}
+                }
+            }
+        }
+    )
     assert any(f.rule_id == "IOS-ATS-003e" for f in findings)
     assert any("example.com" in f.title for f in findings)
 
 
-def test_ats_weak_tls():
-    plist = {
-        "NSAppTransportSecurity": {
-            "NSExceptionDomains": {
-                "legacy.example.com": {"NSExceptionMinimumTLSVersion": "TLSv1.0"}
+def test_ats_weak_tls() -> None:
+    findings = ats.check_plist(
+        {
+            "NSAppTransportSecurity": {
+                "NSExceptionDomains": {
+                    "legacy.example.com": {"NSExceptionMinimumTLSVersion": "TLSv1.0"}
+                }
             }
         }
-    }
-    findings = ats.check(plist)
+    )
     assert any(f.rule_id == "IOS-ATS-003f" for f in findings)
 
 
-def test_ats_file_sharing():
-    findings = ats.check({"UIFileSharingEnabled": True})
+def test_ats_modern_tls_is_clean() -> None:
+    findings = ats.check_plist(
+        {
+            "NSAppTransportSecurity": {
+                "NSExceptionDomains": {
+                    "ok.example.com": {"NSExceptionMinimumTLSVersion": "TLSv1.3"}
+                }
+            }
+        }
+    )
+    assert not any(f.rule_id == "IOS-ATS-003f" for f in findings)
+
+
+def test_ats_file_sharing() -> None:
+    findings = ats.check_plist({"UIFileSharingEnabled": True})
     assert any(f.rule_id == "IOS-ATS-003g" for f in findings)
 
 
-def test_ats_large_query_schemes():
-    schemes = [f"scheme{i}" for i in range(15)]
-    findings = ats.check({"LSApplicationQueriesSchemes": schemes})
-    assert any(f.rule_id == "IOS-ATS-003h" for f in findings)
-
-
-def test_ats_small_query_schemes_no_finding():
-    schemes = [f"scheme{i}" for i in range(5)]
-    findings = ats.check({"LSApplicationQueriesSchemes": schemes})
-    assert not any(f.rule_id == "IOS-ATS-003h" for f in findings)
-
-
-# ── Entropy ───────────────────────────────────────────────────────────────────
-
-
-def test_entropy_low_for_repeated():
-    assert _shannon_entropy("aaaaaaaaaa") < 1.0
-
-
-def test_entropy_high_for_random():
-    # A base64-like string should have high entropy
-    s = "aB3xQ9mKvP2nLwRjTyUoIeWsZdHfCgA1"
-    assert _shannon_entropy(s) > 4.0
-
-
-# ── Diff ─────────────────────────────────────────────────────────────────────
-
-
-def _make_result(findings: list[Finding]) -> ScanResult:
-    r = ScanResult(
-        app_id="com.example", app_version="1.0", build="1", ipa_name="test.ipa"
-    )
-    r.findings = findings
-    return r
-
-
-def _finding(rule_id: str, evidence: str = "") -> Finding:
-    return Finding(
-        rule_id=rule_id,
-        title=rule_id,
-        severity=Severity.HIGH,
-        description="",
-        evidence=evidence,
+def test_ats_schemes_threshold_boundary() -> None:
+    """LSA_SCHEMES_THRESHOLD controls the finding boundary exactly."""
+    at_limit = [f"s{i}" for i in range(LSA_SCHEMES_THRESHOLD)]
+    assert not any(
+        f.rule_id == "IOS-ATS-003h"
+        for f in ats.check_plist({"LSApplicationQueriesSchemes": at_limit})
     )
 
-
-def test_diff_new():
-    baseline = _make_result([_finding("IOS-ATS-003a")])
-    current = _make_result(
-        [
-            _finding("IOS-ATS-003a"),
-            _finding("IOS-SEC-002-aws_key", "AKIAIOSFODNN7EXAMPLE"),
-        ]
+    over = [f"s{i}" for i in range(LSA_SCHEMES_THRESHOLD + 1)]
+    assert any(
+        f.rule_id == "IOS-ATS-003h"
+        for f in ats.check_plist({"LSApplicationQueriesSchemes": over})
     )
-    diff = compare(baseline, current)
-    assert len(diff.new) == 1
-    assert diff.new[0].rule_id == "IOS-SEC-002-aws_key"
-    assert len(diff.fixed) == 0
-    assert len(diff.persisted) == 1
-
-
-def test_diff_fixed():
-    baseline = _make_result([_finding("IOS-ATS-003a"), _finding("IOS-DBG-004a")])
-    current = _make_result([_finding("IOS-ATS-003a")])
-    diff = compare(baseline, current)
-    assert len(diff.fixed) == 1
-    assert diff.fixed[0].rule_id == "IOS-DBG-004a"
-    assert len(diff.new) == 0
-
-
-def test_diff_empty():
-    baseline = _make_result([])
-    current = _make_result([])
-    diff = compare(baseline, current)
-    assert diff.new == []
-    assert diff.fixed == []
-    assert diff.persisted == []
-
-
-# ── Models ────────────────────────────────────────────────────────────────────
-
-
-def test_scan_result_summary():
-    r = _make_result(
-        [
-            Finding("A", "A", Severity.HIGH, ""),
-            Finding("B", "B", Severity.MEDIUM, ""),
-            Finding("C", "C", Severity.LOW, ""),
-            Finding("D", "D", Severity.INFO, ""),
-        ]
-    )
-    s = r.to_dict()["summary"]
-    # Top-level counts (backward compatible)
-    assert s["high"] == 1
-    assert s["medium"] == 1
-    assert s["low"] == 1
-    assert s["info"] == 1
-    assert s["total"] == 4
-    assert s["suppressed"] == 0
-    # All findings are static (no dynamic source tag)
-    assert s["static"]["total"] == 4
-    assert s["dynamic"]["total"] == 0
-
-
-def test_finding_roundtrip():
-    f = Finding(
-        "IOS-ATS-003a",
-        "title",
-        Severity.HIGH,
-        "desc",
-        "evidence",
-        "rec",
-        "MASVS-NETWORK-1",
-        {"k": "v"},
-    )
-    assert Finding.from_dict(f.to_dict()) == f
-
-
-def test_finding_masvs_field():
-    f = Finding("R", "T", Severity.HIGH, "D", masvs="MASVS-RESILIENCE-3")
-    d = f.to_dict()
-    assert d["masvs"] == "MASVS-RESILIENCE-3"
-    f2 = Finding.from_dict(d)
-    assert f2.masvs == "MASVS-RESILIENCE-3"
 
 
 # ── Metadata checker ──────────────────────────────────────────────────────────
 
 
-def test_metadata_background_mode_voip():
-    plist = {"UIBackgroundModes": ["voip"]}
-    findings = check_metadata(plist)
-    assert any(f.rule_id == "IOS-META-012a" for f in findings)
-    voip_finding = next(f for f in findings if f.rule_id == "IOS-META-012a")
-    assert voip_finding.severity == Severity.LOW
+def test_metadata_background_mode_voip() -> None:
+    findings = metadata.check_plist({"UIBackgroundModes": ["voip"]})
+    voip = next(f for f in findings if f.rule_id == "IOS-META-012a")
+    assert voip.severity == Severity.LOW
 
 
-def test_metadata_sensitive_permissions():
-    plist = {
-        "NSCameraUsageDescription": "Take photos",
-        "NSMicrophoneUsageDescription": "Record audio",
-    }
-    findings = check_metadata(plist)
-    meta_b = [f for f in findings if f.rule_id == "IOS-META-012b"]
-    assert len(meta_b) == 1
-    assert "Camera" in meta_b[0].evidence or "camera" in meta_b[0].evidence.lower()
-
-
-def test_metadata_missing_ats():
-    findings = check_metadata({})
-    assert any(f.rule_id == "IOS-META-012c" for f in findings)
-
-
-def test_metadata_ats_present_no_012c():
-    plist = {"NSAppTransportSecurity": {}}
-    findings = check_metadata(plist)
-    assert not any(f.rule_id == "IOS-META-012c" for f in findings)
-
-
-def test_metadata_unknown_background_mode():
-    plist = {"UIBackgroundModes": ["unknown-mode"]}
-    findings = check_metadata(plist)
+def test_metadata_unknown_background_mode_ignored() -> None:
+    findings = metadata.check_plist({"UIBackgroundModes": ["unknown-mode"]})
     assert not any(f.rule_id == "IOS-META-012a" for f in findings)
 
 
-# ── Suppression ───────────────────────────────────────────────────────────────
-
-
-def test_suppression_matches_rule_id():
-    sup = Suppression(rule_id="IOS-ATS-003a")
-    f = _finding("IOS-ATS-003a", "some evidence")
-    assert sup.matches(f)
-
-
-def test_suppression_no_match_different_rule():
-    sup = Suppression(rule_id="IOS-ATS-003a")
-    f = _finding("IOS-SEC-002", "evidence")
-    assert not sup.matches(f)
-
-
-def test_suppression_evidence_prefix():
-    sup = Suppression(rule_id="IOS-SEC-002", evidence_prefix="AKIA")
-    f = _finding("IOS-SEC-002", "AKIAIOSFODNN7EXAMPLE")
-    assert sup.matches(f)
-
-
-def test_suppression_evidence_prefix_no_match():
-    sup = Suppression(rule_id="IOS-SEC-002", evidence_prefix="AKIA")
-    f = _finding("IOS-SEC-002", "something else")
-    assert not sup.matches(f)
-
-
-def test_suppression_store_apply():
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    # Start with empty store
-    tmp_path.write_text("[]", encoding="utf-8")
-    store = SuppressionStore(path=tmp_path)
-    store.add("IOS-ATS-003a")
-    findings = [
-        _finding("IOS-ATS-003a"),
-        _finding("IOS-SEC-002", "AKIAIOSFODNN7EXAMPLE"),
-    ]
-    active, suppressed = store.apply(findings)
-    assert len(active) == 1
-    assert active[0].rule_id == "IOS-SEC-002"
-    assert len(suppressed) == 1
-    assert suppressed[0].rule_id == "IOS-ATS-003a"
-    tmp_path.unlink(missing_ok=True)
-
-
-def test_suppression_store_roundtrip():
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    tmp_path.write_text("[]", encoding="utf-8")
-    store = SuppressionStore(path=tmp_path)
-    store.add("IOS-DBG-004a", evidence_prefix="DEBUG", reason="test fixture")
-    # Reload
-    store2 = SuppressionStore(path=tmp_path)
-    sups = store2.list_all()
-    assert len(sups) == 1
-    assert sups[0].rule_id == "IOS-DBG-004a"
-    assert sups[0].evidence_prefix == "DEBUG"
-    assert sups[0].reason == "test fixture"
-    tmp_path.unlink(missing_ok=True)
-
-
-# ── Report generation ─────────────────────────────────────────────────────────
-
-
-def _make_full_result() -> ScanResult:
-    r = ScanResult(
-        app_id="com.example.app",
-        app_version="2.0",
-        build="100",
-        ipa_name="Example.ipa",
-        scan_id="abc12345-0000-0000-0000-000000000000",
-        scanned_at="2026-05-10T00:00:00",
+def test_metadata_sensitive_permissions() -> None:
+    findings = metadata.check_plist(
+        {
+            "NSCameraUsageDescription": "Take photos",
+            "NSMicrophoneUsageDescription": "Record audio",
+        }
     )
-    r.findings = [
-        Finding(
-            "IOS-ATS-003a",
-            "NSAllowsArbitraryLoads is enabled",
-            Severity.HIGH,
-            "Allows all HTTP traffic.",
-            evidence="NSAllowsArbitraryLoads = True",
-            recommendation="Disable arbitrary loads.",
-            masvs="MASVS-NETWORK-1",
-        ),
-        Finding(
-            "IOS-META-012c",
-            "NSAppTransportSecurity absent",
-            Severity.INFO,
-            "No ATS config found.",
-            masvs="MASVS-PLATFORM-1",
-        ),
-    ]
-    return r
+    meta_b = [f for f in findings if f.rule_id == "IOS-META-012b"]
+    assert len(meta_b) == 1
+    assert "Camera" in meta_b[0].evidence
 
 
-def test_to_json_contains_findings():
-    result = _make_full_result()
-    output = to_json(result)
-    data = json.loads(output)
-    assert data["app_id"] == "com.example.app"
-    assert len(data["findings"]) == 2
-    assert data["findings"][0]["masvs"] == "MASVS-NETWORK-1"
+def test_metadata_missing_ats() -> None:
+    assert any(f.rule_id == "IOS-META-012c" for f in metadata.check_plist({}))
 
 
-def test_to_sarif_structure():
-    result = _make_full_result()
-    output = to_sarif(result)
-    data = json.loads(output)
-    assert data["version"] == "2.1.0"
-    runs = data["runs"]
-    assert len(runs) == 1
-    assert runs[0]["tool"]["driver"]["name"] == "shingan"
-    assert len(runs[0]["results"]) == 2
+def test_metadata_ats_present_no_012c() -> None:
+    findings = metadata.check_plist({"NSAppTransportSecurity": {}})
+    assert not any(f.rule_id == "IOS-META-012c" for f in findings)
 
 
-def test_to_html_english():
-    result = _make_full_result()
-    html = to_html(result, lang="en")
-    assert "Findings" in html
-    assert "Recommendation" in html
-    assert "MASVS: MASVS-NETWORK-1" in html
-    assert 'lang="en"' in html
+def test_metadata_custom_url_scheme() -> None:
+    findings = metadata.check_plist(
+        {"CFBundleURLTypes": [{"CFBundleURLSchemes": ["myapp"]}]}
+    )
+    assert any(f.rule_id == "IOS-URL-018a" for f in findings)
 
 
-def test_to_html_japanese():
-    result = _make_full_result()
-    html = to_html(result, lang="ja")
-    assert "検出結果" in html
-    assert "推奨事項" in html
-    assert 'lang="ja"' in html
+def test_metadata_no_universal_links() -> None:
+    assert any(f.rule_id == "IOS-URL-018b" for f in metadata.check_plist({}))
 
 
-def test_to_html_diff_badges():
-    result = _make_full_result()
-    fp = result.findings[0].fingerprint()
-    html = to_html(result, diff_new={fp}, lang="en")
-    assert "NEW" in html
+# ── Crypto checker ────────────────────────────────────────────────────────────
 
 
-# ── CheckContext ──────────────────────────────────────────────────────────────
+def test_crypto_detects_md5(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(strings={"_CC_MD5", "something else"})
+    assert any(f.rule_id == "IOS-SEC-010a" for f in check_crypto(ctx))
 
 
-def _make_ctx(
-    strings: set[str] | None = None, info_plist: dict | None = None
-) -> CheckContext:
-    """Build a CheckContext with pre-populated strings (no subprocess needed)."""
-    ctx = CheckContext(binary_path=Path("/dev/null"), info_plist=info_plist or {})
-    if strings is not None:
-        # Bypass lazy property by directly setting the cached value
-        ctx.__dict__["strings"] = strings
-        ctx.__dict__["symbol_names"] = set()
-        ctx.__dict__["lief_binary"] = None
-        ctx.__dict__["objc_classes"] = []
-        ctx.__dict__["all_text"] = strings
-    return ctx
+def test_crypto_clean(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(strings={"SomeRandomString", "OtherThing"})
+    assert not any(f.rule_id.startswith("IOS-SEC-010") for f in check_crypto(ctx))
 
 
-def test_check_context_empty_strings():
-    ctx = _make_ctx(strings=set())
-    assert ctx.strings == set()
-    assert ctx.symbol_names == set()
-    assert ctx.all_text == set()
+# ── Debug flags checker ───────────────────────────────────────────────────────
 
 
-def test_crypto_checker_detects_md5():
-    ctx = _make_ctx(strings={"_CC_MD5", "something else"})
-    findings = check_crypto(ctx)
-    assert any(f.rule_id == "IOS-SEC-010a" for f in findings)
+def test_debug_flags_assertions_enabled(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(strings=set(), info_plist={"NSAssertionsEnabled": True})
+    assert any(f.rule_id == "IOS-DBG-004c" for f in check_debug(ctx))
 
 
-def test_crypto_checker_clean():
-    ctx = _make_ctx(strings={"SomeRandomString", "OtherThing"})
-    findings = check_crypto(ctx)
-    assert not any(f.rule_id.startswith("IOS-SEC-010") for f in findings)
+def test_debug_flags_nslog(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(strings={"NSLog(@'hello world')"})
+    assert any(f.rule_id == "IOS-DBG-004b" for f in check_debug(ctx))
 
 
-def test_debug_flags_nsa_assertions():
-    ctx = _make_ctx(strings=set(), info_plist={"NSAssertionsEnabled": True})
-    findings = check_debug(ctx)
-    assert any(f.rule_id == "IOS-DBG-004c" for f in findings)
+# ── Protection (RASP) checker ─────────────────────────────────────────────────
 
 
-def test_debug_flags_debug_string():
-    ctx = _make_ctx(strings={"NSLog(@'hello world')"})
-    findings = check_debug(ctx)
-    assert any(f.rule_id == "IOS-DBG-004b" for f in findings)
-
-
-def test_protection_no_jailbreak_detection():
-    ctx = _make_ctx(strings={"some_unrelated_string"})
-    findings = check_protection(ctx)
-    jb = [f for f in findings if f.rule_id == "IOS-RASP-005a-missing"]
+def test_protection_reports_missing_jailbreak_detection(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(strings={"some_unrelated_string"})
+    jb = [f for f in check_protection(ctx) if f.rule_id == "IOS-RASP-005a-missing"]
     assert len(jb) == 1
     assert jb[0].severity == Severity.MEDIUM
 
 
-def test_protection_jailbreak_detected():
-    ctx = _make_ctx(strings={"/Applications/Cydia.app", "other"})
-    findings = check_protection(ctx)
-    jb = [f for f in findings if f.rule_id == "IOS-RASP-005a-found"]
+def test_protection_recognises_jailbreak_detection(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(strings={"/Applications/Cydia.app", "other"})
+    jb = [f for f in check_protection(ctx) if f.rule_id == "IOS-RASP-005a-found"]
     assert len(jb) == 1
     assert jb[0].severity == Severity.INFO
 
 
-def test_ats_schemes_threshold():
-    """LSA_SCHEMES_THRESHOLD constant controls the finding boundary."""
-    schemes_at_limit = [f"s{i}" for i in range(LSA_SCHEMES_THRESHOLD)]
-    findings_at = ats.check({"LSApplicationQueriesSchemes": schemes_at_limit})
-    assert not any(f.rule_id == "IOS-ATS-003h" for f in findings_at)
+# ── Secrets checker (iOS profile) ─────────────────────────────────────────────
 
-    schemes_over = [f"s{i}" for i in range(LSA_SCHEMES_THRESHOLD + 1)]
-    findings_over = ats.check({"LSApplicationQueriesSchemes": schemes_over})
-    assert any(f.rule_id == "IOS-ATS-003h" for f in findings_over)
+
+def test_secrets_detects_aws_key(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(strings={"AKIAIOSFODNN7EXAMPLE"})
+    findings = check_secrets(ctx)
+    assert any(f.rule_id == "IOS-SEC-002-aws_key" for f in findings)
+    assert all(f.rule_id.startswith("IOS-") for f in findings)
+
+
+def test_secrets_uses_long_strings_only(make_ios_ctx) -> None:
+    """Short strings are filtered out of the secrets corpus."""
+    ctx = make_ios_ctx(strings={"short"})
+    assert check_secrets(ctx) == []
+
+
+def test_secrets_http_url_is_medium(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(strings={"http://insecure.example.com/api"})
+    url_findings = [f for f in check_secrets(ctx) if f.rule_id.endswith("http_url")]
+    assert len(url_findings) == 1
+    assert url_findings[0].severity == Severity.MEDIUM
+
+
+def test_secrets_clean_binary(make_ios_ctx) -> None:
+    ctx = make_ios_ctx(strings={"CFBundleIdentifier", "UIApplicationMain"})
+    assert check_secrets(ctx) == []

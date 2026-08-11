@@ -1,15 +1,17 @@
 [project]
 name = "shingan"
 version = "1.0.0"
-description = "iOS IPA static analysis tool — visualizes where your app is vulnerable to reverse engineering"
+description = "iOS/Android static security analysis tool — visualizes where your app is vulnerable to reverse engineering"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "androguard>=4.1.4",
     "click>=8.4.2",
+    "defusedxml>=0.7.1",
     "fastapi>=0.140.0",
     "jinja2>=3.1.6",
     "lief>=0.17.6",
+    # Required by FastAPI to parse multipart uploads. Not imported directly.
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
@@ -28,12 +30,125 @@ shingan = "shingan.cli:cli"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
+    "mypy>=1.14.0",
     "pre-commit>=4.6.1",
     "pytest>=9.0.3",
+    "pytest-cov>=6.0.0",
     "ruff>=0.16.2",
+    "types-defusedxml>=0.7.0.20260504",
+    "types-pyyaml>=6.0.12",
 ]
 
+# ── Lint ──────────────────────────────────────────────────────────────────────
+
 [tool.ruff.lint]
-# Pin the rule set explicitly. Previously this was left unset and inherited
-# ruff's default selection, which widened from 59 to 413 rules in 0.16.
-select = ["E4", "E7", "E9", "F"]
+# Pinned explicitly rather than inheriting ruff's default selection, which
+# widened from 59 to 413 rules in 0.16. Everything enabled here is enforced;
+# rules the project has deliberately not adopted are listed in `ignore` with a
+# reason, so the scope is a decision rather than an accident.
+select = [
+    "E4",     # pycodestyle: imports
+    "E7",     # pycodestyle: statements
+    "E9",     # pycodestyle: runtime errors
+    "F",      # pyflakes
+    "B",      # flake8-bugbear: likely bugs
+    "BLE",    # flake8-blind-except
+    "S",      # flake8-bandit: security
+    "DTZ",    # flake8-datetimez: naive datetimes
+    "I",      # isort: import ordering
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+    "PIE",    # flake8-pie
+    "RET",    # flake8-return
+    "PTH",    # flake8-use-pathlib
+    "C4",     # flake8-comprehensions
+    "ISC",    # implicit string concatenation
+    "RUF",    # ruff-specific
+    "PL",     # pylint subset
+    "T20",    # no stray print()
+    "ARG",    # unused arguments
+    "TRY",    # tryceratops: exception anti-patterns
+]
+
+ignore = [
+    # The project deliberately catches broad exceptions at isolation boundaries
+    # (per-checker, per-rule, per-notification) so one failure cannot abort a
+    # scan. Every such site logs; S110 (silent pass) stays enabled to enforce that.
+    "BLE001",
+    # Optional/heavy dependencies (lief, androguard, frida, uvicorn, weasyprint)
+    # are imported lazily inside functions so the CLI starts fast and stays
+    # usable when an extra is not installed.
+    "PLC0415",
+    "TRY003",  # long messages inline: clearer than a bespoke exception per case
+    "TRY300",  # a trailing return in `try` reads better than an `else:` block here
+    "TRY400",  # logger.error vs logger.exception is chosen per-site
+    "PLR0911", # multiple returns read fine in the dispatch/classify helpers
+    "PLR0912", # branch count: checkers are intentionally flat rule lists
+    "PLR0913", # argument count: analyze()/CLI commands take many options
+    "PLR0917", # ditto, for positional counts
+    "PLR2004", # magic values in severity tables and tests
+    "S603",    # subprocess calls are all fixed argv lists, never shell strings
+    "S607",    # tools (strings/codesign/adb/lldb) are resolved from PATH by design
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",    # assert is the point of a test
+    "S108",    # /tmp paths in fixtures are synthetic, never opened
+    "ARG001",  # fixtures are often requested purely for their side effects
+    "ARG005",  # stub lambdas ignore the arguments they are handed
+    "PLR2004",
+]
+"shingan/web/main.py" = [
+    "B008",    # Depends()/File() in defaults is FastAPI's documented API
+]
+"shingan/core/checkers/**" = [
+    "PLR0915", # checkers are long but flat: one block per rule
+]
+
+# ── Type checking ─────────────────────────────────────────────────────────────
+
+[tool.mypy]
+python_version = "3.13"
+files = ["shingan"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+# Full strictness is not yet reachable: androguard, lief and frida ship no
+# type information, so the checker layer would be flooded with Any errors.
+# These are the settings the codebase currently satisfies.
+disallow_incomplete_defs = true
+
+[[tool.mypy.overrides]]
+# Third-party dependencies without type stubs.
+module = [
+    "androguard.*",
+    "frida.*",
+    "lief.*",
+    "weasyprint.*",
+]
+ignore_missing_imports = true
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["shingan"]
+branch = true
+omit = ["shingan/core/dynamic/scripts/*"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "pragma: no cover",
+]

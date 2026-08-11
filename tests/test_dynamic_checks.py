@@ -1,46 +1,58 @@
-"""Unit tests for dynamic analysis module (frida-free, mock-based)."""
+"""Unit tests for the dynamic analysis module (frida-free, mock-based).
+
+Device and lldb probes are exercised by stubbing ``run_command``, the single
+seam every external-tool call now goes through, rather than by patching
+``subprocess.run`` globally.
+"""
 
 from __future__ import annotations
 
+import importlib
+import json
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from shingan.core.models import Finding, ScanResult, Severity
+import pytest
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _make_result(findings: list[Finding] | None = None) -> ScanResult:
-    r = ScanResult(app_id="com.example", app_version="1.0", build="1", ipa_name="t.ipa")
-    r.findings = findings or []
-    return r
+from shingan.core.models import Finding, Severity
+from shingan.core.shell import CommandResult
 
 
-def _dynamic_finding(outcome: str, rule_id: str = "IOS-DYN-001") -> Finding:
-    return Finding(
-        rule_id=rule_id,
-        title="test",
-        severity=Severity.HIGH if outcome == "bypassed" else Severity.INFO,
-        description="",
-        extra={"source": "dynamic", "outcome": outcome},
-    )
+def _ok(stdout: str) -> CommandResult:
+    return CommandResult(returncode=0, stdout=stdout, stderr="")
 
 
-# ── runner: unavailable when frida missing ────────────────────────────────────
+def _failed(stderr: str = "", returncode: int = 1) -> CommandResult:
+    return CommandResult(returncode=returncode, stdout="", stderr=stderr)
 
 
-def test_runner_returns_unavailable_without_frida():
-    """When frida is not installed, all findings have outcome=unavailable."""
-    # Temporarily hide frida from the import system
+@pytest.fixture
+def dynamic_finding():
+    def _make(outcome: str, rule_id: str = "IOS-DYN-001") -> Finding:
+        return Finding(
+            rule_id=rule_id,
+            title="test",
+            severity=Severity.HIGH if outcome == "bypassed" else Severity.INFO,
+            description="",
+            extra={"source": "dynamic", "outcome": outcome},
+        )
+
+    return _make
+
+
+# ── runner: unavailable when frida is missing ─────────────────────────────────
+
+
+def _reload_runner():
+    import shingan.core.dynamic.runner as runner_mod
+
+    importlib.reload(runner_mod)
+    return runner_mod
+
+
+def test_runner_returns_unavailable_without_frida() -> None:
     with patch.dict(sys.modules, {"frida": None}):
-        # Re-import to pick up the patched sys.modules
-        import importlib
-        import shingan.core.dynamic.runner as runner_mod
-
-        importlib.reload(runner_mod)
-
-        findings = runner_mod.run_dynamic_checks("com.example.app")
+        findings = _reload_runner().run_dynamic_checks("com.example.app")
 
     assert len(findings) == 3
     assert all(f.extra.get("outcome") == "unavailable" for f in findings)
@@ -48,94 +60,90 @@ def test_runner_returns_unavailable_without_frida():
     assert all(f.severity == Severity.INFO for f in findings)
 
 
-def test_runner_unavailable_rule_ids():
+def test_runner_unavailable_rule_ids() -> None:
     with patch.dict(sys.modules, {"frida": None}):
-        import importlib
-        import shingan.core.dynamic.runner as runner_mod
+        findings = _reload_runner().run_dynamic_checks("com.example.app")
 
-        importlib.reload(runner_mod)
-        findings = runner_mod.run_dynamic_checks("com.example.app")
+    assert {f.rule_id for f in findings} == {
+        "IOS-DYN-001",
+        "IOS-DYN-002",
+        "IOS-DYN-003",
+    }
 
-    rule_ids = {f.rule_id for f in findings}
-    assert rule_ids == {"IOS-DYN-001", "IOS-DYN-002", "IOS-DYN-003"}
 
-
-def test_runner_android_unavailable_without_frida():
-    """Android platform returns AND-DYN-001/002 when frida is missing."""
+def test_runner_android_unavailable_without_frida() -> None:
     with patch.dict(sys.modules, {"frida": None}):
-        import importlib
-        import shingan.core.dynamic.runner as runner_mod
-
-        importlib.reload(runner_mod)
-        findings = runner_mod.run_dynamic_checks("com.example.app", platform="android")
+        findings = _reload_runner().run_dynamic_checks(
+            "com.example.app", platform="android"
+        )
 
     assert len(findings) == 2
-    rule_ids = {f.rule_id for f in findings}
-    assert rule_ids == {"AND-DYN-001", "AND-DYN-002"}
+    assert {f.rule_id for f in findings} == {"AND-DYN-001", "AND-DYN-002"}
     assert all(f.extra.get("outcome") == "unavailable" for f in findings)
-    assert all(f.severity == Severity.INFO for f in findings)
 
 
-# ── ScanResult summary breakdown ──────────────────────────────────────────────
+# ── ScanResult dynamic/static breakdown ───────────────────────────────────────
 
 
-def test_summary_no_dynamic_findings():
-    """Summary has empty dynamic section when no dynamic findings exist."""
-    result = _make_result([Finding("IOS-SYM-001", "t", Severity.HIGH, "d")])
-    d = result.to_dict()
-    assert d["summary"]["dynamic"]["total"] == 0
-    assert d["summary"]["dynamic"]["bypassed"] == 0
-    assert d["summary"]["static"]["total"] == 1
-    assert d["summary"]["static"]["high"] == 1
+def test_summary_no_dynamic_findings(make_result, make_finding) -> None:
+    result = make_result([make_finding("IOS-SYM-001", severity=Severity.HIGH)])
+    summary = result.to_dict()["summary"]
+    assert summary["dynamic"]["total"] == 0
+    assert summary["dynamic"]["bypassed"] == 0
+    assert summary["static"]["total"] == 1
+    assert summary["static"]["high"] == 1
 
 
-def test_summary_with_bypassed_finding():
-    result = _make_result(
+def test_summary_with_bypassed_finding(
+    make_result, make_finding, dynamic_finding
+) -> None:
+    result = make_result(
         [
-            Finding("IOS-SYM-001", "t", Severity.HIGH, "d"),
-            _dynamic_finding("bypassed", "IOS-DYN-001"),
+            make_finding("IOS-SYM-001", severity=Severity.HIGH),
+            dynamic_finding("bypassed", "IOS-DYN-001"),
         ]
     )
-    d = result.to_dict()
-    assert d["summary"]["dynamic"]["bypassed"] == 1
-    assert d["summary"]["dynamic"]["resistant"] == 0
-    assert d["summary"]["dynamic"]["high"] == 1
-    assert d["summary"]["static"]["high"] == 1
-    # Top-level total still works (backward compat)
-    assert d["summary"]["high"] == 2
-    assert d["summary"]["total"] == 2
+    summary = result.to_dict()["summary"]
+    assert summary["dynamic"]["bypassed"] == 1
+    assert summary["dynamic"]["resistant"] == 0
+    assert summary["dynamic"]["high"] == 1
+    assert summary["static"]["high"] == 1
+    assert summary["high"] == 2  # top-level total spans both sources
+    assert summary["total"] == 2
 
 
-def test_summary_with_resistant_finding():
-    result = _make_result([_dynamic_finding("resistant", "IOS-DYN-002")])
-    d = result.to_dict()
-    assert d["summary"]["dynamic"]["resistant"] == 1
-    assert d["summary"]["dynamic"]["bypassed"] == 0
-    assert d["summary"]["dynamic"]["info"] == 1
+def test_summary_with_resistant_finding(make_result, dynamic_finding) -> None:
+    summary = make_result([dynamic_finding("resistant", "IOS-DYN-002")]).to_dict()[
+        "summary"
+    ]
+    assert summary["dynamic"]["resistant"] == 1
+    assert summary["dynamic"]["bypassed"] == 0
+    assert summary["dynamic"]["info"] == 1
 
 
-def test_summary_mixed_outcomes():
-    result = _make_result(
+def test_summary_mixed_outcomes(make_result, dynamic_finding) -> None:
+    result = make_result(
         [
-            _dynamic_finding("bypassed", "IOS-DYN-001"),
-            _dynamic_finding("resistant", "IOS-DYN-002"),
-            _dynamic_finding("unavailable", "IOS-DYN-003"),
+            dynamic_finding("bypassed", "IOS-DYN-001"),
+            dynamic_finding("resistant", "IOS-DYN-002"),
+            dynamic_finding("unavailable", "IOS-DYN-003"),
         ]
     )
-    d = result.to_dict()
-    assert d["summary"]["dynamic"]["total"] == 3
-    assert d["summary"]["dynamic"]["bypassed"] == 1
-    assert d["summary"]["dynamic"]["resistant"] == 1
-    assert d["summary"]["static"]["total"] == 0
+    summary = result.to_dict()["summary"]
+    assert summary["dynamic"]["total"] == 3
+    assert summary["dynamic"]["bypassed"] == 1
+    assert summary["dynamic"]["resistant"] == 1
+    assert summary["static"]["total"] == 0
 
 
-def test_summary_backward_compatible_keys():
-    """Existing summary keys must remain present and correct."""
-    result = _make_result(
+def test_summary_backward_compatible_keys(
+    make_result, make_finding, dynamic_finding
+) -> None:
+    result = make_result(
         [
-            Finding("A", "t", Severity.HIGH, "d"),
-            Finding("B", "t", Severity.MEDIUM, "d"),
-            _dynamic_finding("bypassed"),
+            make_finding("A", severity=Severity.HIGH),
+            make_finding("B", severity=Severity.MEDIUM),
+            dynamic_finding("bypassed"),
         ]
     )
     s = result.to_dict()["summary"]
@@ -146,76 +154,79 @@ def test_summary_backward_compatible_keys():
     assert "suppressed" in s
 
 
-# ── pt_deny_attach: lldb parsing ──────────────────────────────────────────────
+# ── pt_deny_attach: lldb classification ───────────────────────────────────────
+
+_LLDB_TARGET = "shingan.core.dynamic.checks.pt_deny_attach.run_command"
 
 
-def test_pt_deny_attach_resistant_on_timeout():
+def test_pt_deny_attach_resistant_on_timeout() -> None:
     from shingan.core.dynamic.checks.pt_deny_attach import _attempt_lldb_attach
-    import subprocess
 
-    with patch("subprocess.run") as mock_run:
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["lldb"], timeout=15)
+    timed_out = CommandResult(returncode=124, stdout="", stderr="", timed_out=True)
+    with patch(_LLDB_TARGET, return_value=timed_out):
         result = _attempt_lldb_attach(pid=12345, timeout=15)
 
     assert result["outcome"] == "resistant"
     assert "timed out" in result["detail"]
 
 
-def test_pt_deny_attach_unavailable_when_lldb_missing():
+def test_pt_deny_attach_unavailable_when_lldb_missing() -> None:
     from shingan.core.dynamic.checks.pt_deny_attach import _attempt_lldb_attach
 
-    with patch("subprocess.run", side_effect=FileNotFoundError):
+    missing = CommandResult(returncode=127, stdout="", stderr="", missing=True)
+    with patch(_LLDB_TARGET, return_value=missing):
         result = _attempt_lldb_attach(pid=12345)
 
     assert result["outcome"] == "unavailable"
     assert "lldb" in result["detail"]
 
 
-def test_pt_deny_attach_bypassed_on_successful_attach():
+def test_pt_deny_attach_bypassed_on_successful_attach() -> None:
     from shingan.core.dynamic.checks.pt_deny_attach import _attempt_lldb_attach
 
-    mock_result = MagicMock()
-    mock_result.stdout = "process attach stopped\nthread list ..."
-    mock_result.stderr = ""
-    mock_result.returncode = 0
-
-    with patch("subprocess.run", return_value=mock_result):
+    attached = _ok("process attach stopped\nthread list ...")
+    with patch(_LLDB_TARGET, return_value=attached):
         result = _attempt_lldb_attach(pid=12345)
 
     assert result["outcome"] == "bypassed"
 
 
-def test_pt_deny_attach_resistant_on_permission_denied():
+def test_pt_deny_attach_resistant_on_permission_denied() -> None:
     from shingan.core.dynamic.checks.pt_deny_attach import _attempt_lldb_attach
 
-    mock_result = MagicMock()
-    mock_result.stdout = ""
-    mock_result.stderr = "error: attach failed — ptrace: Operation not permitted"
-    mock_result.returncode = 1
-
-    with patch("subprocess.run", return_value=mock_result):
+    refused = _failed("error: attach failed — ptrace: Operation not permitted")
+    with patch(_LLDB_TARGET, return_value=refused):
         result = _attempt_lldb_attach(pid=12345)
 
     assert result["outcome"] == "resistant"
 
 
-# ── device listing: xcrun fallback ────────────────────────────────────────────
+def test_pt_deny_attach_error_on_unrecognised_output() -> None:
+    from shingan.core.dynamic.checks.pt_deny_attach import _attempt_lldb_attach
+
+    with patch(_LLDB_TARGET, return_value=_ok("something unexpected")):
+        result = _attempt_lldb_attach(pid=12345)
+
+    assert result["outcome"] == "error"
 
 
-def test_list_simulators_returns_empty_on_xcrun_failure():
+# ── device listing: xcrun simulators ──────────────────────────────────────────
+
+_DEVICE_TARGET = "shingan.core.dynamic.device.run_command"
+
+
+def test_list_simulators_returns_empty_on_xcrun_failure() -> None:
     from shingan.core.dynamic.device import _list_simulators_via_xcrun
 
-    with patch("subprocess.run", side_effect=FileNotFoundError):
-        result = _list_simulators_via_xcrun()
+    missing = CommandResult(returncode=127, stdout="", stderr="", missing=True)
+    with patch(_DEVICE_TARGET, return_value=missing):
+        assert _list_simulators_via_xcrun() == []
 
-    assert result == []
 
-
-def test_list_simulators_parses_booted_only():
+def test_list_simulators_parses_booted_only() -> None:
     from shingan.core.dynamic.device import _list_simulators_via_xcrun
-    import json
 
-    fake_output = json.dumps(
+    payload = json.dumps(
         {
             "devices": {
                 "com.apple.CoreSimulator.SimRuntime.iOS-17-4": [
@@ -226,11 +237,7 @@ def test_list_simulators_parses_booted_only():
         }
     )
 
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stdout = fake_output
-
-    with patch("subprocess.run", return_value=mock_result):
+    with patch(_DEVICE_TARGET, return_value=_ok(payload)):
         devices = _list_simulators_via_xcrun()
 
     assert len(devices) == 1
@@ -239,56 +246,62 @@ def test_list_simulators_parses_booted_only():
     assert devices[0].os_version == "iOS 17.4"
 
 
-# ── device listing: adb emulator ─────────────────────────────────────────────
+def test_list_simulators_handles_malformed_json() -> None:
+    from shingan.core.dynamic.device import _list_simulators_via_xcrun
+
+    with patch(_DEVICE_TARGET, return_value=_ok("{not json")):
+        assert _list_simulators_via_xcrun() == []
 
 
-def test_list_emulators_via_adb_parses_emulator():
+# ── device listing: adb ───────────────────────────────────────────────────────
+
+_ADB_OUTPUT = (
+    "List of devices attached\n"
+    "emulator-5554          device product:sdk_gphone_x86_64 "
+    "model:sdk_gphone_x86_64 device:emu64xa\n"
+    "192.168.1.10:5555      device product:taimen model:Pixel_2 device:taimen\n"
+)
+
+
+def test_list_emulators_via_adb_parses_emulator() -> None:
     from shingan.core.dynamic.device import _list_emulators_via_adb
 
-    adb_output = (
-        "List of devices attached\n"
-        "emulator-5554          device product:sdk_gphone_x86_64 model:sdk_gphone_x86_64 device:emu64xa\n"
-        "192.168.1.10:5555      device product:taimen model:Pixel_2 device:taimen\n"
-    )
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.stdout = adb_output
-
-    with patch("subprocess.run") as mock_run:
-        mock_run.side_effect = [
-            mock_proc,  # adb devices -l
-            MagicMock(stdout="10"),  # getprop emulator-5554
-            MagicMock(stdout="14"),  # getprop 192.168.1.10:5555
-        ]
+    # First call lists devices; the two that follow are getprop lookups.
+    responses = [_ok(_ADB_OUTPUT), _ok("10"), _ok("14")]
+    with patch(_DEVICE_TARGET, side_effect=responses):
         devices = _list_emulators_via_adb()
 
     assert len(devices) == 2
     emu = next(d for d in devices if d.udid == "emulator-5554")
     assert emu.kind == "emulator"
     assert emu.os_version == "Android 10"
+    assert emu.name == "sdk gphone x86 64"
 
     real = next(d for d in devices if d.udid == "192.168.1.10:5555")
     assert real.kind == "usb"
 
 
-def test_list_emulators_returns_empty_on_adb_failure():
+def test_list_emulators_returns_empty_on_adb_failure() -> None:
     from shingan.core.dynamic.device import _list_emulators_via_adb
 
-    with patch("subprocess.run", side_effect=FileNotFoundError):
-        result = _list_emulators_via_adb()
+    missing = CommandResult(returncode=127, stdout="", stderr="", missing=True)
+    with patch(_DEVICE_TARGET, return_value=missing):
+        assert _list_emulators_via_adb() == []
 
-    assert result == []
 
-
-def test_list_emulators_skips_offline():
+def test_list_emulators_skips_offline() -> None:
     from shingan.core.dynamic.device import _list_emulators_via_adb
 
-    adb_output = "List of devices attached\nemulator-5554          offline\n"
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.stdout = adb_output
+    offline = _ok("List of devices attached\nemulator-5554          offline\n")
+    with patch(_DEVICE_TARGET, return_value=offline):
+        assert _list_emulators_via_adb() == []
 
-    with patch("subprocess.run", return_value=mock_proc):
+
+def test_list_emulators_without_os_version() -> None:
+    from shingan.core.dynamic.device import _list_emulators_via_adb
+
+    responses = [_ok(_ADB_OUTPUT), _failed(), _failed()]
+    with patch(_DEVICE_TARGET, side_effect=responses):
         devices = _list_emulators_via_adb()
 
-    assert devices == []
+    assert all(d.os_version == "Android" for d in devices)

@@ -6,8 +6,8 @@ or Swift mangled symbols that assist reverse engineering.
 
 from __future__ import annotations
 
-from shingan.core.context import CheckContext
 from shingan.core.constants import EVIDENCE_OBJC_SAMPLE, EVIDENCE_SWIFT_SAMPLE
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
 
 
@@ -19,7 +19,7 @@ def check(ctx: CheckContext) -> list[Finding]:
 
     # --- 1. Debug symbols (STABS / DWARF) ---
     try:
-        import lief  # type: ignore[import]
+        import lief
 
         suspicious = [
             sym.name
@@ -81,11 +81,7 @@ def check(ctx: CheckContext) -> list[Finding]:
         )
 
     # --- 3. Swift symbols (demanglable = readable names) ---
-    swift_syms = [
-        name
-        for name in ctx.symbol_names
-        if name.startswith("$s") or name.startswith("_$s")
-    ]
+    swift_syms = [name for name in ctx.symbol_names if name.startswith(("$s", "_$s"))]
     if swift_syms:
         sample = swift_syms[:EVIDENCE_SWIFT_SAMPLE]
         findings.append(

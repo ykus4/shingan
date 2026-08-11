@@ -5,20 +5,26 @@ from __future__ import annotations
 import logging
 import plistlib
 import re
-import subprocess
+from pathlib import Path
 
-from shingan.core.context import CheckContext
 from shingan.core.constants import EVIDENCE_DEBUG_SAMPLE
+from shingan.core.context import CheckContext
 from shingan.core.models import Finding, Severity
+from shingan.core.shell import run_command
 
 logger = logging.getLogger(__name__)
+
+#: codesign is fast; a short timeout keeps a hung invocation from stalling a scan.
+_CODESIGN_TIMEOUT = 30
 
 # Entitlements that should not appear in App Store / release builds
 DANGEROUS_ENTITLEMENTS: dict[str, tuple[Severity, str]] = {
     "get-task-allow": (
         Severity.HIGH,
-        "Allows a debugger to attach to the process (task_for_pid). "
-        "This must not be present in release builds.",
+        (
+            "Allows a debugger to attach to the process (task_for_pid). "
+            "This must not be present in release builds."
+        ),
     ),
     "com.apple.security.cs.debugged": (
         Severity.HIGH,
@@ -49,20 +55,19 @@ _DEBUG_STRING_PATTERNS: list[re.Pattern] = [
 ]
 
 
-def _read_entitlements(binary_path) -> dict:
+def _read_entitlements(binary_path: Path) -> dict:
     """Extract embedded entitlements via codesign (macOS only)."""
+    result = run_command(
+        ["codesign", "-d", "--entitlements", ":-", str(binary_path)],
+        timeout=_CODESIGN_TIMEOUT,
+    )
+    if not result.ok or not result.stdout:
+        logger.debug("codesign entitlements extraction unavailable for %s", binary_path)
+        return {}
     try:
-        result = subprocess.run(
-            ["codesign", "-d", "--entitlements", ":-", str(binary_path)],
-            capture_output=True,
-            timeout=30,
-        )
-        raw = result.stdout
-        if not raw:
-            return {}
-        return plistlib.loads(raw)
-    except Exception as exc:
-        logger.debug("codesign entitlements extraction failed: %s", exc)
+        return plistlib.loads(result.stdout.encode())
+    except plistlib.InvalidFileException as exc:
+        logger.debug("codesign returned unparsable entitlements: %s", exc)
         return {}
 
 
