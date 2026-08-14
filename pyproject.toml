@@ -22,7 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 dynamic = [
     "frida>=17.9.11",
-    "frida-tools>=12.4.0",
+    "frida-tools>=14.10.4",
 ]
 
 [project.scripts]
